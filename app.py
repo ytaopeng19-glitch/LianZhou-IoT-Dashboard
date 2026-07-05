@@ -94,7 +94,7 @@ if not df_live.empty:
         st.metric(label="☀️ 光照强度", value=f"{latest_record.get('light_lux', 0.0):.1f} lx")
     with col5:
         # 将土壤原始模拟量转化为直观的显示值
-        st.metric(label="🌱 土壤墒情原始值", value=f"{int(latest_record.get('soil_moistrue', 0))}")
+        st.metric(label="🌱 土壤墒情原始值", value=f"{int(latest_record.get('soil_moisture', 0))}")
 
     st.markdown("---")
 
