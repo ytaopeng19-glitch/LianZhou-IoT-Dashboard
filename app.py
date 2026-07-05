@@ -110,7 +110,7 @@ if not df_live.empty:
     # ---- 布局核心区块 1：实时生境监测指标 ----
     st.subheader("📈 连州种植基地：实时环境要素")
     
-    # 显式使用 %H 打印最新同步的北京时间（24小时制）
+    # 显式打印最新同步的北京时间（24小时制）
     latest_time_str = latest_record['created_at'].strftime("%Y-%m-%d %H:%M:%S")
     st.caption(f"🕒 最新云端同步时间：**{latest_time_str}** (北京时间 24H)")
     
@@ -124,7 +124,6 @@ if not df_live.empty:
     with col4:
         st.metric(label="☀️ 光照强度", value=f"{latest_record.get('light_lux', 0.0):.1f} lx")
     with col5:
-        # 修正了之前的拼写错误
         st.metric(label="🌱 土壤含水率", value=f"{int(latest_record.get('soil_moisture', 0))} %")
 
     st.markdown("---")
@@ -172,12 +171,12 @@ if not df_live.empty:
             3. 将上方 `st.image()` 中的模拟 URL 替换为该设备的真实流地址即可。
             """)
 
-    # ---- 📈 趋势数据历史图表可视化 + 一键导出 CSV ----
+    # ---- 📈 趋势数据历史独立图表可视化 + 一键导出 CSV ----
     st.markdown("---")
     
     chart_header_col, download_btn_col = st.columns([3, 1])
     with chart_header_col:
-        st.subheader("📊 种植基地环境因子演变历史趋势 (最新100个采集周期数据)")
+        st.subheader("📊 种植基地环境因子独立演变趋势 (最新100个采集周期数据)")
     with download_btn_col:
         csv_bytes = convert_df_to_csv(df_live)
         # 文件名使用24小时制标记
@@ -190,36 +189,32 @@ if not df_live.empty:
             key="download-csv"
         )
     
-    # 提取包含时间戳的全要素数据集并建立索引
-    all_要素_df = df_live[['created_at', 'air_temp', 'air_hum', 'light_lux', 'co2_ppm', 'soil_moisture']].copy()
-    all_要素_df.set_index('created_at', inplace=True)
+    # 提取包含时间戳的全要素数据集并建立索引（24小时制时间轴）
+    chart_df = df_live[['created_at', 'air_temp', 'air_hum', 'light_lux', 'co2_ppm', 'soil_moisture']].copy()
+    chart_df.set_index('created_at', inplace=True)
     
-    # 利用分栏多选项卡，彻底解决多指标范围不一致（压扁曲线）的问题
-    tab1, tab2, tab3, tab4 = st.tabs(["📊 全要素一体图", "🌡️ 水分与温湿度", "☁️ 二氧化碳浓度趋势", "☀️ 光照强度趋势"])
+    # =======================================================
+    # 构建 5 个独立的折线图区 (采用两列并排 + 底部单列排版)
+    # =======================================================
+    chart_col1, chart_col2 = st.columns(2)
     
-    with tab1:
-        st.caption("注：由于各要素单位及量程不同（如二氧化碳通常高于800，温度低于30），一体图中低数值线条可能会变平缓，建议切换至专业选项卡查看。")
-        chart_all = all_要素_df.copy()
-        chart_all.columns = ['空气温度 (°C)', '空气湿度 (%)', '光照强度 (lx)', '二氧化碳 (ppm)', '土壤含水率 (%)']
-        st.line_chart(chart_all)
+    with chart_col1:
+        st.markdown("##### 🌡️ 空气温度 (°C)")
+        st.line_chart(chart_df[['air_temp']].rename(columns={'air_temp': '空气温度 (°C)'}))
         
-    with tab2:
-        # 将量程接近的温度、湿度、土壤含水率放在一起展示（0-100区间），图形极度美观
-        chart_thw = all_要素_df[['air_temp', 'air_hum', 'soil_moisture']].copy()
-        chart_thw.columns = ['空气温度 (°C)', '空气湿度 (%)', '土壤含水率 (%)']
-        st.line_chart(chart_thw)
+        st.markdown("##### 🌱 土壤含水率 (%)")
+        st.line_chart(chart_df[['soil_moisture']].rename(columns={'soil_moisture': '土壤含水率 (%)'}))
+
+    with chart_col2:
+        st.markdown("##### 💧 空气湿度 (%)")
+        st.line_chart(chart_df[['air_hum']].rename(columns={'air_hum': '空气湿度 (%)'}))
         
-    with tab3:
-        # 单独观测二氧化碳动态
-        chart_co2 = all_要素_df[['co2_ppm']].copy()
-        chart_co2.columns = ['二氧化碳浓度 (ppm)']
-        st.line_chart(chart_co2)
+        st.markdown("##### ☀️ 光照强度 (lx)")
+        st.line_chart(chart_df[['light_lux']].rename(columns={'light_lux': '光照强度 (lx)'}))
         
-    with tab4:
-        # 单独观测光照动态
-        chart_lux = all_要素_df[['light_lux']].copy()
-        chart_lux.columns = ['光照强度 (lx)']
-        st.line_chart(chart_lux)
+    # 二氧化碳单独占据一整行（因为波动幅度通常比较大，横向拉宽更好看）
+    st.markdown("##### ☁️ 二氧化碳浓度 (ppm)")
+    st.line_chart(chart_df[['co2_ppm']].rename(columns={'co2_ppm': '二氧化碳浓度 (ppm)'}))
 
 else:
     st.warning("⏳ 正在等待 Supabase 云端同步初始历史数据，请确保底层板子已成功连网发送首包。")
