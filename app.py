@@ -37,7 +37,7 @@ def fetch_env_data():
         if response.status_code == 200:
             data = response.json()
             df = pd.DataFrame(data)
-            # 自动处理时间戳并强制转换为北京时间（东八区）
+            # 自动处理时间戳并强制转换为北京时间（东八区）24小时制
             if 'created_at' in df.columns:
                 df['created_at'] = pd.to_datetime(df['created_at'])
                 if df['created_at'].dt.tz is None:
@@ -52,19 +52,19 @@ def fetch_env_data():
         st.error(f"❌ 数据库连接异常: {e}")
         return pd.DataFrame()
 
-# 💾 核心新功能：将当前获取的历史数据规范化并转换为 CSV 字节流
+# 💾 将当前获取的历史数据规范化并转换为 CSV 字节流（24小时制）
 @st.cache_data
 def convert_df_to_csv(df):
     export_df = df.copy()
     
-    # 1. 将时间格式化为标准不带时区的字符串，方便 Excel 识别
+    # 强制转换为标准24小时制字符串格式
     if 'created_at' in export_df.columns:
         export_df['created_at'] = export_df['created_at'].dt.strftime('%Y-%m-%d %H:%M:%S')
         
-    # 2. 英文字段映射为规范的中文字段与单位
+    # 英文字段映射为规范 的中文表头
     columns_mapping = {
         "id": "数据编号",
-        "created_at": "采集时间(北京时间)",
+        "created_at": "采集时间(北京时间24H)",
         "co2_ppm": "二氧化碳浓度(ppm)",
         "air_temp": "空气温度(°C)",
         "air_hum": "空气湿度(%)",
@@ -72,15 +72,11 @@ def convert_df_to_csv(df):
         "soil_moisture": "土壤含水率(%)"
     }
     
-    # 3. 过滤并重命名列
     existing_mapping = {k: v for k, v in columns_mapping.items() if k in export_df.columns}
     export_df = export_df.rename(columns=existing_mapping)
-    
-    # 4. 重新排序列顺序
     ordered_cols = [v for v in columns_mapping.values() if v in export_df.columns]
     export_df = export_df[ordered_cols]
     
-    # 5. 使用 utf-8-sig 编码导出，彻底防止 Excel 打开时中文乱码
     return export_df.to_csv(index=False).encode('utf-8-sig')
 
 # ==========================================
@@ -114,9 +110,9 @@ if not df_live.empty:
     # ---- 布局核心区块 1：实时生境监测指标 ----
     st.subheader("📈 连州种植基地：实时环境要素")
     
-    # 打印最新同步的北京时间
+    # 显式使用 %H 打印最新同步的北京时间（24小时制）
     latest_time_str = latest_record['created_at'].strftime("%Y-%m-%d %H:%M:%S")
-    st.caption(f"🕒 最新云端同步时间：**{latest_time_str}** (北京时间)")
+    st.caption(f"🕒 最新云端同步时间：**{latest_time_str}** (北京时间 24H)")
     
     col1, col2, col3, col4, col5 = st.columns(5)
     with col1:
@@ -128,12 +124,12 @@ if not df_live.empty:
     with col4:
         st.metric(label="☀️ 光照强度", value=f"{latest_record.get('light_lux', 0.0):.1f} lx")
     with col5:
-        # 已修正：使用对齐后的正确字段
+        # 修正了之前的拼写错误
         st.metric(label="🌱 土壤含水率", value=f"{int(latest_record.get('soil_moisture', 0))} %")
 
     st.markdown("---")
 
-    # ---- 布局核心区块 2：水肥控制与实时视频（双列排版） ----
+    # ---- 布局核心区块 2：水肥控制与实时视频 ----
     left_col, right_col = st.columns([1, 1])
 
     with left_col:
@@ -176,17 +172,15 @@ if not df_live.empty:
             3. 将上方 `st.image()` 中的模拟 URL 替换为该设备的真实流地址即可。
             """)
 
-    # ---- 趋势数据历史图表可视化 + 一键导出 CSV ----
+    # ---- 📈 趋势数据历史图表可视化 + 一键导出 CSV ----
     st.markdown("---")
     
-    # 采用左右排版，左边放标题，右边放下载按钮
     chart_header_col, download_btn_col = st.columns([3, 1])
     with chart_header_col:
         st.subheader("📊 种植基地环境因子演变历史趋势 (最新100个采集周期数据)")
     with download_btn_col:
-        # 调用转换函数准备二进制 CSV 数据
         csv_bytes = convert_df_to_csv(df_live)
-        # 生成基于当前系统时间的文件名
+        # 文件名使用24小时制标记
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         st.download_button(
             label="📥 一键导出历史数据为 CSV",
@@ -196,11 +190,36 @@ if not df_live.empty:
             key="download-csv"
         )
     
-    # 提取折线图所需数据集
-    chart_data = df_live[['created_at', 'air_temp', 'air_hum', 'light_lux']].copy()
-    chart_data.set_index('created_at', inplace=True)
-    chart_data.columns = ['空气温度 (°C)', '空气湿度 (%)', '光照强度 (lx)']
-    st.line_chart(chart_data)
+    # 提取包含时间戳的全要素数据集并建立索引
+    all_要素_df = df_live[['created_at', 'air_temp', 'air_hum', 'light_lux', 'co2_ppm', 'soil_moisture']].copy()
+    all_要素_df.set_index('created_at', inplace=True)
+    
+    # 利用分栏多选项卡，彻底解决多指标范围不一致（压扁曲线）的问题
+    tab1, tab2, tab3, tab4 = st.tabs(["📊 全要素一体图", "🌡️ 水分与温湿度", "☁️ 二氧化碳浓度趋势", "☀️ 光照强度趋势"])
+    
+    with tab1:
+        st.caption("注：由于各要素单位及量程不同（如二氧化碳通常高于800，温度低于30），一体图中低数值线条可能会变平缓，建议切换至专业选项卡查看。")
+        chart_all = all_要素_df.copy()
+        chart_all.columns = ['空气温度 (°C)', '空气湿度 (%)', '光照强度 (lx)', '二氧化碳 (ppm)', '土壤含水率 (%)']
+        st.line_chart(chart_all)
+        
+    with tab2:
+        # 将量程接近的温度、湿度、土壤含水率放在一起展示（0-100区间），图形极度美观
+        chart_thw = all_要素_df[['air_temp', 'air_hum', 'soil_moisture']].copy()
+        chart_thw.columns = ['空气温度 (°C)', '空气湿度 (%)', '土壤含水率 (%)']
+        st.line_chart(chart_thw)
+        
+    with tab3:
+        # 单独观测二氧化碳动态
+        chart_co2 = all_要素_df[['co2_ppm']].copy()
+        chart_co2.columns = ['二氧化碳浓度 (ppm)']
+        st.line_chart(chart_co2)
+        
+    with tab4:
+        # 单独观测光照动态
+        chart_lux = all_要素_df[['light_lux']].copy()
+        chart_lux.columns = ['光照强度 (lx)']
+        st.line_chart(chart_lux)
 
 else:
     st.warning("⏳ 正在等待 Supabase 云端同步初始历史数据，请确保底层板子已成功连网发送首包。")
