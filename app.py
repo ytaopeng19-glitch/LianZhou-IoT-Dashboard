@@ -14,7 +14,7 @@ st.set_page_config(
 )
 
 # ==========================================
-# 🔑 Supabase 配置凭证 (由底层设备数据源自动对齐)
+# 🔑 Supabase 配置凭证
 # ==========================================
 SUPABASE_URL = "https://srzfkhiminxmbrbdipay.supabase.co/rest/v1/base_env_data"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNyemZraGltaW54bWJyYmRpcGF5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI2OTgyOTcsImV4cCI6MjA4ODI3NDI5N30.jI9aum5Qe5eniH-oHBiRyIo41EpKUIDedkH-2vHiPnw"
@@ -22,14 +22,13 @@ SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 # ==========================================
 # 📊 功能 1：Supabase 数据读取函数
 # ==========================================
-@st.cache_data(ttl=10) # 缓存10秒，避免频繁刷新撑爆云端免费流控
+@st.cache_data(ttl=10) # 缓存10秒，避免频繁刷新
 def fetch_env_data():
     headers = {
         "apikey": SUPABASE_KEY,
         "Authorization": f"Bearer {SUPABASE_KEY}",
-        "Range": "0-99" # 读取最新的100条数据记录用于图表展示
+        "Range": "0-99" # 读取最新的100条数据记录用于展示
     }
-    # 通过排序机制获取最新上传的生态环境数据
     params = {
         "order": "id.desc" 
     }
@@ -38,10 +37,9 @@ def fetch_env_data():
         if response.status_code == 200:
             data = response.json()
             df = pd.DataFrame(data)
-           # 自动处理时间戳并强制转换为北京时间（东八区）
+            # 自动处理时间戳并强制转换为北京时间（东八区）
             if 'created_at' in df.columns:
                 df['created_at'] = pd.to_datetime(df['created_at'])
-                # 判断是否已经包含时区信息，做不同处理，统一转为亚洲/上海时区
                 if df['created_at'].dt.tz is None:
                     df['created_at'] = df['created_at'].dt.tz_localize('UTC').dt.tz_convert('Asia/Shanghai')
                 else:
@@ -53,6 +51,37 @@ def fetch_env_data():
     except Exception as e:
         st.error(f"❌ 数据库连接异常: {e}")
         return pd.DataFrame()
+
+# 💾 核心新功能：将当前获取的历史数据规范化并转换为 CSV 字节流
+@st.cache_data
+def convert_df_to_csv(df):
+    export_df = df.copy()
+    
+    # 1. 将时间格式化为标准不带时区的字符串，方便 Excel 识别
+    if 'created_at' in export_df.columns:
+        export_df['created_at'] = export_df['created_at'].dt.strftime('%Y-%m-%d %H:%M:%S')
+        
+    # 2. 英文字段映射为规范的中文字段与单位
+    columns_mapping = {
+        "id": "数据编号",
+        "created_at": "采集时间(北京时间)",
+        "co2_ppm": "二氧化碳浓度(ppm)",
+        "air_temp": "空气温度(°C)",
+        "air_hum": "空气湿度(%)",
+        "light_lux": "光照强度(lx)",
+        "soil_moisture": "土壤含水率(%)"
+    }
+    
+    # 3. 过滤并重命名列
+    existing_mapping = {k: v for k, v in columns_mapping.items() if k in export_df.columns}
+    export_df = export_df.rename(columns=existing_mapping)
+    
+    # 4. 重新排序列顺序
+    ordered_cols = [v for v in columns_mapping.values() if v in export_df.columns]
+    export_df = export_df[ordered_cols]
+    
+    # 5. 使用 utf-8-sig 编码导出，彻底防止 Excel 打开时中文乱码
+    return export_df.to_csv(index=False).encode('utf-8-sig')
 
 # ==========================================
 # 🏛️ 系统大标题
@@ -71,8 +100,6 @@ with st.sidebar:
     st.markdown("---")
     st.subheader("📡 节点连通状态")
     st.success("🟢 环境采集节点 (ESP32-WiFi): 在线")
-    
-    # 预留第二块及第三块硬件单片机的状态指示接口
     st.info("🟡 水肥控制节点 (未连接): 等待配网...")
     st.info("🟡 视频观测节点 (未连接): 等待配网...")
 
@@ -82,13 +109,12 @@ with st.sidebar:
 df_live = fetch_env_data()
 
 if not df_live.empty:
-    # 获取最新的单条环境传感器参数记录
     latest_record = df_live.iloc[0]
     
     # ---- 布局核心区块 1：实时生境监测指标 ----
     st.subheader("📈 连州种植基地：实时环境要素")
-
-# 提取并格式化最新一条数据的时间
+    
+    # 打印最新同步的北京时间
     latest_time_str = latest_record['created_at'].strftime("%Y-%m-%d %H:%M:%S")
     st.caption(f"🕒 最新云端同步时间：**{latest_time_str}** (北京时间)")
     
@@ -102,8 +128,8 @@ if not df_live.empty:
     with col4:
         st.metric(label="☀️ 光照强度", value=f"{latest_record.get('light_lux', 0.0):.1f} lx")
     with col5:
-        # 将土壤原始模拟量转化为直观的显示值
-        st.metric(label="🌱 土壤水分含量", value=f"{int(latest_record.get('soil_moisture', 0))} %")
+        # 已修正：使用对齐后的正确字段
+        st.metric(label="🌱 土壤含水率", value=f"{int(latest_record.get('soil_moisture', 0))} %")
 
     st.markdown("---")
 
@@ -111,71 +137,69 @@ if not df_live.empty:
     left_col, right_col = st.columns([1, 1])
 
     with left_col:
-        # 📊 功能 2：远程水肥继电器控制管理接口（预留接口）
         st.subheader("🚰 水肥一体化灌溉控制中心")
         st.markdown("针对连州玉竹根系栽培需求，在此对接第二块分布式继电器控制节点。")
         
-        # 模拟电磁阀/水泵工作状态存储
         if 'pump_status' not in st.session_state:
             st.session_state.pump_status = False
 
         if st.session_state.pump_status:
             st.warning("⚠️ 当前状态：远程水泵正在运转，灌溉系统中...")
             if st.button("🔴 紧急关闭远程水泵"):
-                # 🛠️ 【未来第二块单片机代码接入指引】:
-                # 在此通过 requests.post() 向第二块板子的本地 WebServer，或是 MQTT/Supabase 的控制表发送“关泵”指令。
                 st.session_state.pump_status = False
                 st.rerun()
         else:
             st.success("🔵 当前状态：远程水泵处于静止/安全状态")
             if st.button("🟢 一键启动远程水灌溉"):
-                # 🛠️ 【未来第二块单片机代码接入指引】:
-                # 在此通过 requests.post() 发送“开泵”指令。
                 st.session_state.pump_status = True
                 st.rerun()
                 
-        # 硬件底层API接口框架说明
         with st.expander("🛠️ 第二块水肥单片机控制接口配置说明"):
             st.code("""
 // 未来第二块板子通过轮询或 Webhook 接收此 Streamlit 的动作
-// 接口调用框架示例：
 // URL: https://your-api.com/control/pump
 // Payload: {"action": "ON", "target_node": 2}
             """, language="json")
 
     with right_col:
-        # 📊 功能 3：田间实时图像与视频观测系统（预留接口）
         st.subheader("📷 玉竹生态位田间实时视频")
         st.markdown("针对原产地生态环境与物候期跟踪，在此预留 ESP32-CAM 监控视频流。")
-        
-        # 视频回传组件占位
         st.image(
             "https://images.unsplash.com/photo-1628352081506-83c43123ed6d?auto=format&fit=crop&q=80&w=800", 
             caption="🎥 连州玉竹生态种植基地 - 模拟监视器画面 (待硬件上线后替换为实时视频流通道)"
         )
-        
         with st.expander("🛠️ 第三块 ESP32-CAM 视频流接入说明"):
             st.markdown("""
             **视频流未来接入步骤：**
             1. 当你的 ESP32-CAM 单片机就位后，可以将其配置为局域网下的 `MJPEG` 视频流服务器。
-            2. 获取单片机的内网或公网 IP 地址（例如 `http://192:168.x.x:81/stream`）。
-            3. 将上方 `st.image()` 中的模拟 URL 替换为该设备的实时视频流网络地址，系统即可自动实现图像的高频动态刷新。
+            2. 获取单片机的网络地址（例如 `http://192.168.x.x:81/stream`）。
+            3. 将上方 `st.image()` 中的模拟 URL 替换为该设备的真实流地址即可。
             """)
 
-    # ---- 趋势数据历史图表可视化 ----
+    # ---- 趋势数据历史图表可视化 + 一键导出 CSV ----
     st.markdown("---")
-    st.subheader("📊 种植基地环境因子演变历史趋势 (最新100个采集周期数据)")
     
-    # 抽取带有时间戳的数据集
+    # 采用左右排版，左边放标题，右边放下载按钮
+    chart_header_col, download_btn_col = st.columns([3, 1])
+    with chart_header_col:
+        st.subheader("📊 种植基地环境因子演变历史趋势 (最新100个采集周期数据)")
+    with download_btn_col:
+        # 调用转换函数准备二进制 CSV 数据
+        csv_bytes = convert_df_to_csv(df_live)
+        # 生成基于当前系统时间的文件名
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        st.download_button(
+            label="📥 一键导出历史数据为 CSV",
+            data=csv_bytes,
+            file_name=f"连州玉竹环境监测数据_{timestamp}.csv",
+            mime="text/csv",
+            key="download-csv"
+        )
+    
+    # 提取折线图所需数据集
     chart_data = df_live[['created_at', 'air_temp', 'air_hum', 'light_lux']].copy()
-    
-    # 1. 将北京时间设为这批数据的索引（也就是折线图的 X 轴）
     chart_data.set_index('created_at', inplace=True)
-    
-    # 2. 重命名列，让折线图右上角的图例显示中文，更加直观
     chart_data.columns = ['空气温度 (°C)', '空气湿度 (%)', '光照强度 (lx)']
-    
-    # 3. 渲染图表
     st.line_chart(chart_data)
 
 else:
