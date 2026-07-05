@@ -87,6 +87,10 @@ if not df_live.empty:
     
     # ---- 布局核心区块 1：实时生境监测指标 ----
     st.subheader("📈 连州种植基地：实时环境要素")
+
+# 提取并格式化最新一条数据的时间
+    latest_time_str = latest_record['created_at'].strftime("%Y-%m-%d %H:%M:%S")
+    st.caption(f"🕒 最新云端同步时间：**{latest_time_str}** (北京时间)")
     
     col1, col2, col3, col4, col5 = st.columns(5)
     with col1:
