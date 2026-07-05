@@ -162,8 +162,16 @@ if not df_live.empty:
     st.markdown("---")
     st.subheader("📊 种植基地环境因子演变历史趋势 (最新100个采集周期数据)")
     
-    # 抽取折线图所需数据集
-    chart_data = df_live[['air_temp', 'air_hum', 'light_lux']].copy()
+    # 抽取带有时间戳的数据集
+    chart_data = df_live[['created_at', 'air_temp', 'air_hum', 'light_lux']].copy()
+    
+    # 1. 将北京时间设为这批数据的索引（也就是折线图的 X 轴）
+    chart_data.set_index('created_at', inplace=True)
+    
+    # 2. 重命名列，让折线图右上角的图例显示中文，更加直观
+    chart_data.columns = ['空气温度 (°C)', '空气湿度 (%)', '光照强度 (lx)']
+    
+    # 3. 渲染图表
     st.line_chart(chart_data)
 
 else:
