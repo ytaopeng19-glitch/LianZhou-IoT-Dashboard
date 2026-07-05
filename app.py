@@ -172,7 +172,7 @@ st.markdown(
     "<center style='color:gray; font-size:14px;'>"
     "技术支持团队：中山大学农业与生物技术学院 魏蜜团队"
     "</center>", 
-    unsafe_allow_style=True
+    unsafe_allow_html=True
 )
 
 # ==========================================
