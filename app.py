@@ -38,9 +38,14 @@ def fetch_env_data():
         if response.status_code == 200:
             data = response.json()
             df = pd.DataFrame(data)
-            # 如果数据库有时间戳字段，可在此处转换为本地时间，否则使用递增 id 作为横轴
+           # 自动处理时间戳并强制转换为北京时间（东八区）
             if 'created_at' in df.columns:
                 df['created_at'] = pd.to_datetime(df['created_at'])
+                # 判断是否已经包含时区信息，做不同处理，统一转为亚洲/上海时区
+                if df['created_at'].dt.tz is None:
+                    df['created_at'] = df['created_at'].dt.tz_localize('UTC').dt.tz_convert('Asia/Shanghai')
+                else:
+                    df['created_at'] = df['created_at'].dt.tz_convert('Asia/Shanghai')
             return df
         else:
             st.error(f"⚠️ 从 Supabase 读取数据失败，状态码: {response.status_code}")
