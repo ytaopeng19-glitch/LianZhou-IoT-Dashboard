@@ -101,9 +101,20 @@ with left_col:
     
     # 动态渲染 ESP32-CAM 传回的画面
     latest_img_url, capture_time = fetch_latest_image()
-    display_time = capture_time[:19].replace("T", " ") if capture_time != "待 ESP32-CAM 上传" else capture_time
     
-   # 🌟 新增：利用 HTML/CSS 实现左上角 OSD 水印悬浮特效
+    # 💡 核心时区修正：将 Supabase 默认的 UTC 时间精准转换为北京时间 (Asia/Shanghai)
+    if capture_time != "待 ESP32-CAM 上传":
+        try:
+            # Supabase 返回的是带时区的 ISO 字符串，使用 pandas 自动识别并转换为北京时间
+            dt_beijing = pd.to_datetime(capture_time).tz_convert('Asia/Shanghai')
+            display_time = dt_beijing.strftime('%Y-%m-%d %H:%M:%S')
+        except Exception:
+            # 备用方案：若转换异常，采用截取原始文本方式
+            display_time = capture_time[:19].replace("T", " ")
+    else:
+        display_time = capture_time
+    
+    # 🌟 OSD 水印悬浮特效（已完美对接北京时间）
     watermark_html = f"""
     <div style="position: relative; width: 100%; border-radius: 8px; overflow: hidden; border: 1px solid #e6e6e6;">
         <img src="{latest_img_url}" style="width: 100%; display: block;">
@@ -119,7 +130,6 @@ with left_col:
     """
     # 渲染带有水印的画面
     st.markdown(watermark_html, unsafe_allow_html=True)
-    # 保留底部的状态说明
     st.caption("🎥 ESP32-CAM 实时流媒体接入 (随系统心跳同步刷新)")
     
     st.markdown("<br>", unsafe_allow_html=True)
