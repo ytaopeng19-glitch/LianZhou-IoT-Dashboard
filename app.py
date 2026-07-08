@@ -4,6 +4,9 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 import time
+import base64          
+from io import BytesIO 
+from PIL import Image  
 
 # ==========================================
 # ⚙️ 核心与页面配置
@@ -15,7 +18,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 隐藏顶部右侧 Streamlit 默认菜单，让大屏更具工程感
+# 隐藏顶部右侧 Streamlit 默认菜单
 hide_streamlit_style = """
 <style>
 #MainMenu {visibility: hidden;}
@@ -24,20 +27,18 @@ footer {visibility: hidden;}
 """
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
-# Supabase 配置
 SUPABASE_URL = "https://srzfkhiminxmbrbdipay.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNyemZraGltaW54bWJyYmRpcGF5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI2OTgyOTcsImV4cCI6MjA4ODI3NDI5N30.jI9aum5Qe5eniH-oHBiRyIo41EpKUIDedkH-2vHiPnw"
 
 # ==========================================
-# 🔌 数据抓取引擎
+# 🔌 数据抓取与图像旋转引擎
 # ==========================================
 @st.cache_data(ttl=10) 
 def fetch_latest_image():
-    """从 Supabase 获取最新照片"""
+    """从 Supabase 获取最新照片URL"""
     url = f"{SUPABASE_URL}/rest/v1/base_cam_data"
     headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
     params = {"select": "img_url, created_at", "order": "id.desc", "limit": 1}
-    
     try:
         response = requests.get(url, headers=headers, params=params)
         if response.status_code == 200:
@@ -48,21 +49,44 @@ def fetch_latest_image():
         pass
     return "https://images.unsplash.com/photo-1628352081506-83c43123ed6d?auto=format&fit=crop&q=80&w=800", "待 ESP32-CAM 上传"
 
+@st.cache_data(ttl=3600, max_entries=20) 
+def process_and_rotate_image(img_url, rotation_angle):
+    """下载图片并进行角度旋转，转换为 Base64 供 HTML 渲染 (带缓存机制极速加载)"""
+    if not img_url.startswith("http"):
+        return img_url
+    try:
+        resp = requests.get(img_url, timeout=5)
+        if resp.status_code == 200:
+            img = Image.open(BytesIO(resp.content))
+            # 如果需要旋转 (负数代表顺时针，expand=True保证90度旋转时不裁切画幅)
+            if rotation_angle != 0:
+                img = img.rotate(-rotation_angle, expand=True)
+            # 转回 Base64
+            buffered = BytesIO()
+            img.save(buffered, format="JPEG")
+            img_b64 = base64.b64encode(buffered.getvalue()).decode()
+            return f"data:image/jpeg;base64,{img_b64}"
+    except Exception:
+        pass
+    return img_url # 旋转失败则退回原图链接
+
 # ==========================================
 # 🖥️ 左侧边栏 (Sidebar) 渲染
 # ==========================================
 with st.sidebar:
-    # 💡 核心修改：直接读取你宝塔根目录下的本地高清 Logo 文件
     try:
         st.image("logo绿色.png", use_container_width=True)
     except Exception:
-        st.error("未能找到 logo绿色.png 文件，请确认已上传至宝塔同一目录")
+        st.error("未能找到 logo绿色.png 文件")
         
     st.markdown("---")
     
     st.subheader("⚙️ 运行控制台")
     auto_refresh = st.checkbox("☑️ 开启数据自动刷新", value=True)
     refresh_rate = st.slider("⏱️ 刷新间隔 (秒)", min_value=5, max_value=60, value=10)
+    
+    # 🌟 新增：画面旋转控制器
+    cam_rotation = st.selectbox("🔄 画面校正角度 (顺时针)", [0, 90, 180, 270], index=0, format_func=lambda x: f"{x}°")
     
     st.markdown("---")
     st.subheader("🔗 节点连通状态")
@@ -81,7 +105,6 @@ current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 st.caption(f"🕒 最新同步: {current_time} | 📍 基地: 广东连州高山生态种植区")
 st.markdown("---")
 
-# 5 个核心指标 KPI 行
 k1, k2, k3, k4, k5 = st.columns(5)
 k1.metric("☁️ 二氧化碳 [ppm]", "887")
 k2.metric("🌡️ 空气温度 [℃]", "30.7")
@@ -91,7 +114,7 @@ k5.metric("🌱 土壤含水率 [%]", "72")
 st.markdown("---")
 
 # ==========================================
-# 🖥️ 主体分栏区 (左 4 : 右 6 黄金比例)
+# 🖥️ 主体分栏区
 # ==========================================
 left_col, right_col = st.columns([4, 6])
 
@@ -99,25 +122,25 @@ left_col, right_col = st.columns([4, 6])
 with left_col:
     st.subheader("📷 现场生态位实况")
     
-    # 动态渲染 ESP32-CAM 传回的画面
     latest_img_url, capture_time = fetch_latest_image()
     
-    # 💡 核心时区修正：将 Supabase 默认的 UTC 时间精准转换为北京时间 (Asia/Shanghai)
+    # 💡 时区转换
     if capture_time != "待 ESP32-CAM 上传":
         try:
-            # Supabase 返回的是带时区的 ISO 字符串，使用 pandas 自动识别并转换为北京时间
             dt_beijing = pd.to_datetime(capture_time).tz_convert('Asia/Shanghai')
             display_time = dt_beijing.strftime('%Y-%m-%d %H:%M:%S')
         except Exception:
-            # 备用方案：若转换异常，采用截取原始文本方式
             display_time = capture_time[:19].replace("T", " ")
     else:
         display_time = capture_time
+        
+    # 🌟 调用后台旋转引擎处理图片
+    display_img_src = process_and_rotate_image(latest_img_url, cam_rotation)
     
-    # 🌟 OSD 水印悬浮特效（已完美对接北京时间）
+    # 带有防裁切 OSD 的 HTML 结构
     watermark_html = f"""
     <div style="position: relative; width: 100%; border-radius: 8px; overflow: hidden; border: 1px solid #e6e6e6;">
-        <img src="{latest_img_url}" style="width: 100%; display: block;">
+        <img src="{display_img_src}" style="width: 100%; display: block;">
         <div style="position: absolute; top: 12px; left: 12px; 
                     background-color: rgba(0, 0, 0, 0.65); color: #ffffff; 
                     padding: 8px 12px; border-radius: 6px; 
@@ -128,9 +151,8 @@ with left_col:
         </div>
     </div>
     """
-    # 渲染带有水印的画面
     st.markdown(watermark_html, unsafe_allow_html=True)
-    st.caption("🎥 ESP32-CAM 实时流媒体接入 (随系统心跳同步刷新)")
+    st.caption("🎥 ESP32-CAM 实时流媒体接入 (已启用云端渲染引擎)")
     
     st.markdown("<br>", unsafe_allow_html=True)
     st.subheader("🚰 智能水肥干预")
@@ -141,7 +163,6 @@ with left_col:
 with right_col:
     st.subheader("📈 核心微气候演变趋势 (100周期)")
     
-    # 模拟 100 周期的波动数据
     df_temp = pd.DataFrame(np.random.randn(100, 1) * 0.5 + 30.7, columns=['空气温度 (℃)'])
     df_hum = pd.DataFrame(np.random.randn(100, 1) * 1.5 + 80.1, columns=['空气湿度 (%)'])
     df_light = pd.DataFrame(np.random.randn(100, 1) * 5 + 25.8, columns=['光照强度 (lx)'])
