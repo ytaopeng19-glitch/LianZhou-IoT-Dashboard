@@ -52,7 +52,12 @@ def fetch_latest_image():
 # 🖥️ 左侧边栏 (Sidebar) 渲染
 # ==========================================
 with st.sidebar:
-    st.image("https://upload.wikimedia.org/wikipedia/zh/thumb/4/4e/Sun_Yat-sen_University_Logo.svg/1200px-Sun_Yat-sen_University_Logo.svg.png", width=200) # 中大Logo占位
+    # 💡 核心修改：直接读取你宝塔根目录下的本地高清 Logo 文件
+    try:
+        st.image("logo绿色.png", use_container_width=True)
+    except Exception:
+        st.error("未能找到 logo绿色.png 文件，请确认已上传至宝塔同一目录")
+        
     st.markdown("---")
     
     st.subheader("⚙️ 运行控制台")
@@ -63,8 +68,6 @@ with st.sidebar:
     st.subheader("🔗 节点连通状态")
     st.success("🟢 环境采集节点 (ESP32): 在线")
     st.warning("🟡 水肥控制节点: 等待配网...")
-    
-    # 🎉 这里为你更新了状态：摄像头已成功上线！
     st.success("🟢 视频观测节点 (ESP32-CAM): 在线") 
     
     st.markdown("---")
@@ -115,14 +118,13 @@ with left_col:
 with right_col:
     st.subheader("📈 核心微气候演变趋势 (100周期)")
     
-    # 模拟 100 周期的波动数据 (请在这里替换为你真实的数据库查询逻辑)
+    # 模拟 100 周期的波动数据
     df_temp = pd.DataFrame(np.random.randn(100, 1) * 0.5 + 30.7, columns=['空气温度 (℃)'])
     df_hum = pd.DataFrame(np.random.randn(100, 1) * 1.5 + 80.1, columns=['空气湿度 (%)'])
     df_light = pd.DataFrame(np.random.randn(100, 1) * 5 + 25.8, columns=['光照强度 (lx)'])
     df_soil = pd.DataFrame(np.random.randn(100, 1) * 0.8 + 72, columns=['土壤含水率 (%)'])
     df_co2 = pd.DataFrame(np.random.randn(100, 1) * 15 + 887, columns=['二氧化碳 (ppm)'])
 
-    # 将图表分为两列完美对齐
     chart_col1, chart_col2 = st.columns(2)
     
     with chart_col1:
