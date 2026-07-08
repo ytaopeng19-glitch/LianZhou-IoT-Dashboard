@@ -5,13 +5,34 @@ import time
 from datetime import datetime
 
 # ==========================================
-# 🎨 页面基本配置
+# 🎨 页面基本配置与全局 CSS 压缩 (专为 27寸大屏优化)
 # ==========================================
 st.set_page_config(
     page_title="连州玉竹栽培环境监测与水肥控制系统",
     page_icon="🌱",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
+
+# 注入 CSS：压缩四周留白，缩小字体，强制图表紧凑
+st.markdown("""
+    <style>
+    .block-container {
+        padding-top: 1.5rem !important;
+        padding-bottom: 0rem !important;
+        padding-left: 2rem !important;
+        padding-right: 2rem !important;
+        max-width: 100% !important;
+    }
+    /* 缩小标题间距 */
+    h1, h2, h3 { margin-bottom: 0.1rem !important; padding-bottom: 0.1rem !important; }
+    /* 紧凑化指标卡片数字大小 */
+    [data-testid="stMetricValue"] { font-size: 1.8rem !important; }
+    /* 隐藏 Streamlit 默认的顶部菜单和底部水印 */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    </style>
+""", unsafe_allow_html=True)
 
 # ==========================================
 # 🔑 Supabase 配置凭证
@@ -22,22 +43,19 @@ SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 # ==========================================
 # 📊 功能 1：Supabase 数据读取函数
 # ==========================================
-@st.cache_data(ttl=10) # 缓存10秒，避免频繁刷新
+@st.cache_data(ttl=10)
 def fetch_env_data():
     headers = {
         "apikey": SUPABASE_KEY,
         "Authorization": f"Bearer {SUPABASE_KEY}",
-        "Range": "0-99" # 读取最新的100条数据记录用于展示
+        "Range": "0-99"
     }
-    params = {
-        "order": "id.desc" 
-    }
+    params = {"order": "id.desc"}
     try:
         response = requests.get(SUPABASE_URL, headers=headers, params=params)
         if response.status_code == 200:
             data = response.json()
             df = pd.DataFrame(data)
-            # 自动处理时间戳并强制转换为北京时间（东八区）24小时制
             if 'created_at' in df.columns:
                 df['created_at'] = pd.to_datetime(df['created_at'])
                 if df['created_at'].dt.tz is None:
@@ -46,22 +64,17 @@ def fetch_env_data():
                     df['created_at'] = df['created_at'].dt.tz_convert('Asia/Shanghai')
             return df
         else:
-            st.error(f"⚠️ 从 Supabase 读取数据失败，状态码: {response.status_code}")
+            st.error(f"⚠️ 数据读取失败，状态码: {response.status_code}")
             return pd.DataFrame()
     except Exception as e:
         st.error(f"❌ 数据库连接异常: {e}")
         return pd.DataFrame()
 
-# 💾 将当前获取的历史数据规范化并转换为 CSV 字节流（24小时制）
 @st.cache_data
 def convert_df_to_csv(df):
     export_df = df.copy()
-    
-    # 强制转换为标准24小时制字符串格式
     if 'created_at' in export_df.columns:
         export_df['created_at'] = export_df['created_at'].dt.strftime('%Y-%m-%d %H:%M:%S')
-        
-    # 英文字段映射为规范 的中文表头
     columns_mapping = {
         "id": "数据编号",
         "created_at": "采集时间(北京时间24H)",
@@ -71,164 +84,135 @@ def convert_df_to_csv(df):
         "light_lux": "光照强度(lx)",
         "soil_moisture": "土壤含水率(%)"
     }
-    
     existing_mapping = {k: v for k, v in columns_mapping.items() if k in export_df.columns}
     export_df = export_df.rename(columns=existing_mapping)
     ordered_cols = [v for v in columns_mapping.values() if v in export_df.columns]
     export_df = export_df[ordered_cols]
-    
     return export_df.to_csv(index=False).encode('utf-8-sig')
 
 # ==========================================
-# 🏛️ 系统大标题
-# ==========================================
-st.title("🌱 中山大学连州玉竹栽培环境监测与水肥控制系统")
-st.markdown("---")
-
-# ==========================================
-# 🎛️ 侧边栏管理控制台
+# 🎛️ 侧边栏：品牌 Logo 与 控制台
 # ==========================================
 with st.sidebar:
-    st.header("⚙️ 系统控制台")
+    # 插入学院 Logo
+    try:
+        st.image("logo绿色.png", use_container_width=True)
+    except Exception:
+        st.warning("⚠️ 未找到 logo绿色.png，请确保图片在同级目录下。")
+        
+    st.markdown("---")
+    st.header("⚙️ 运行控制台")
     auto_refresh = st.checkbox("🔄 开启数据自动刷新", value=True)
-    refresh_interval = st.slider("⏱️ 刷新间隔 (秒)", min_value=5, max_value=60, value=10)
+    refresh_interval = st.slider("⏱️ 刷新间隔 (秒)", 5, 60, 10)
     
     st.markdown("---")
     st.subheader("📡 节点连通状态")
-    st.success("🟢 环境采集节点 (ESP32-WiFi): 在线")
-    st.info("🟡 水肥控制节点 (未连接): 等待配网...")
-    st.info("🟡 视频观测节点 (未连接): 等待配网...")
+    st.success("🟢 环境采集节点 (ESP32): 在线")
+    st.info("🟡 水肥控制节点: 等待配网...")
+    st.info("🟡 视频观测节点: 等待配网...")
+    
+    st.markdown("---")
+    st.markdown("<center style='color:gray; font-size:12px;'>技术支持：中山大学农业与生物技术学院 魏蜜团队</center>", unsafe_allow_html=True)
 
 # ==========================================
-# 📊 核心功能展示区
+# 🏛️ 主界面：标题与导出按钮同行显示
 # ==========================================
 df_live = fetch_env_data()
 
+head_col1, head_col2 = st.columns([5, 1])
+with head_col1:
+    st.title("🌱 连州玉竹栽培环境监测与水肥控制系统")
+    if not df_live.empty:
+        latest_time_str = df_live.iloc[0]['created_at'].strftime("%Y-%m-%d %H:%M:%S")
+        st.caption(f"🕒 最新同步：**{latest_time_str}** | 基地：广东连州高山生态种植区")
+with head_col2:
+    if not df_live.empty:
+        csv_bytes = convert_df_to_csv(df_live)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+        st.download_button(
+            label="📥 导出数据",
+            data=csv_bytes,
+            file_name=f"连州环境数据_{timestamp}.csv",
+            mime="text/csv",
+            use_container_width=True
+        )
+
+# ==========================================
+# 📊 核心指标卡片区 (横向紧凑排列)
+# ==========================================
 if not df_live.empty:
     latest_record = df_live.iloc[0]
     
-    # ---- 布局核心区块 1：实时生境监测指标 ----
-    st.subheader("📈 连州种植基地：实时环境要素")
-    
-    # 显式打印最新同步的北京时间（24小时制）
-    latest_time_str = latest_record['created_at'].strftime("%Y-%m-%d %H:%M:%S")
-    st.caption(f"🕒 最新云端同步时间：**{latest_time_str}** (北京时间 24H)")
-    
-    col1, col2, col3, col4, col5 = st.columns(5)
-    with col1:
-        st.metric(label="☁️ 二氧化碳浓度", value=f"{int(latest_record.get('co2_ppm', 0))} ppm")
-    with col2:
-        st.metric(label="🌡️ 空气温度", value=f"{latest_record.get('air_temp', 0.0):.1f} °C")
-    with col3:
-        st.metric(label="💧 空气湿度", value=f"{latest_record.get('air_hum', 0.0):.1f} %")
-    with col4:
-        st.metric(label="☀️ 光照强度", value=f"{latest_record.get('light_lux', 0.0):.1f} lx")
-    with col5:
-        st.metric(label="🌱 土壤含水率", value=f"{int(latest_record.get('soil_moisture', 0))} %")
+    # 使用自定义高亮容器包裹指标
+    st.markdown("<div style='background-color: #f8f9fa; padding: 10px; border-radius: 10px; margin-bottom: 15px;'>", unsafe_allow_html=True)
+    m_col1, m_col2, m_col3, m_col4, m_col5 = st.columns(5)
+    m_col1.metric("☁️ 二氧化碳 (ppm)", f"{int(latest_record.get('co2_ppm', 0))}")
+    m_col2.metric("🌡️ 空气温度 (°C)", f"{latest_record.get('air_temp', 0.0):.1f}")
+    m_col3.metric("💧 空气湿度 (%)", f"{latest_record.get('air_hum', 0.0):.1f}")
+    m_col4.metric("☀️ 光照强度 (lx)", f"{latest_record.get('light_lux', 0.0):.1f}")
+    m_col5.metric("🌱 土壤含水率 (%)", f"{int(latest_record.get('soil_moisture', 0))}")
+    st.markdown("</div>", unsafe_allow_html=True)
 
-    st.markdown("---")
+    # ==========================================
+    # 🖥️ 全景大屏非对称布局：30% 视频+控制 | 70% 历史趋势图
+    # ==========================================
+    main_left, main_right = st.columns([3, 7], gap="large")
 
-    # ---- 布局核心区块 2：水肥控制与实时视频 ----
-    left_col, right_col = st.columns([1, 1])
-
-    with left_col:
-        st.subheader("🚰 水肥一体化灌溉控制中心")
-        st.markdown("针对连州玉竹根系栽培需求，在此对接第二块分布式继电器控制节点。")
+    # ----- 左侧：现场实况与硬件干预 -----
+    with main_left:
+        st.subheader("📷 现场生态位实况")
+        st.image(
+            "https://images.unsplash.com/photo-1628352081506-83c43123ed6d?auto=format&fit=crop&q=80&w=800", 
+            caption="待 ESP32-CAM 上线后接入流媒体"
+        )
         
+        st.subheader("🚰 智能水肥干预")
         if 'pump_status' not in st.session_state:
             st.session_state.pump_status = False
 
         if st.session_state.pump_status:
-            st.warning("⚠️ 当前状态：远程水泵正在运转，灌溉系统中...")
-            if st.button("🔴 紧急关闭远程水泵"):
+            st.error("⚠️ 滴灌系统正在运行中...")
+            if st.button("🔴 紧急切断水泵", use_container_width=True):
                 st.session_state.pump_status = False
                 st.rerun()
         else:
-            st.success("🔵 当前状态：远程水泵处于静止/安全状态")
-            if st.button("🟢 一键启动远程水灌溉"):
+            st.success("🔵 管道压力正常，处于待命状态")
+            if st.button("🟢 手动启动灌溉", use_container_width=True):
                 st.session_state.pump_status = True
                 st.rerun()
-                
-        with st.expander("🛠️ 第二块水肥单片机控制接口配置说明"):
-            st.code("""
-// 未来第二块板子通过轮询或 Webhook 接收此 Streamlit 的动作
-// URL: https://your-api.com/control/pump
-// Payload: {"action": "ON", "target_node": 2}
-            """, language="json")
 
-    with right_col:
-        st.subheader("📷 玉竹生态位田间实时视频")
-        st.markdown("针对原产地生态环境与物候期跟踪，在此预留 ESP32-CAM 监控视频流。")
-        st.image(
-            "https://images.unsplash.com/photo-1628352081506-83c43123ed6d?auto=format&fit=crop&q=80&w=800", 
-            caption="🎥 连州玉竹生态种植基地 - 模拟监视器画面 (待硬件上线后替换为实时视频流通道)"
-        )
-        with st.expander("🛠️ 第三块 ESP32-CAM 视频流接入说明"):
-            st.markdown("""
-            **视频流未来接入步骤：**
-            1. 当你的 ESP32-CAM 单片机就位后，可以将其配置为局域网下的 `MJPEG` 视频流服务器。
-            2. 获取单片机的网络地址（例如 `http://192.168.x.x:81/stream`）。
-            3. 将上方 `st.image()` 中的模拟 URL 替换为该设备的真实流地址即可。
-            """)
+    # ----- 右侧：高密度图表矩阵 -----
+    with main_right:
+        st.subheader("📈 核心微气候演变趋势 (100周期)")
+        
+        chart_df = df_live[['created_at', 'air_temp', 'air_hum', 'light_lux', 'co2_ppm', 'soil_moisture']].copy()
+        chart_df.set_index('created_at', inplace=True)
+        
+        # 将图表放入 2 列网格中，并严格限制图表高度 (height=180)
+        c_col1, c_col2 = st.columns(2)
+        
+        with c_col1:
+            st.caption("🌡️ 空气温度 (°C)")
+            st.line_chart(chart_df[['air_temp']], height=180)
+            
+            st.caption("☀️ 光照强度 (lx)")
+            st.line_chart(chart_df[['light_lux']], height=180)
+            
+            st.caption("☁️ 二氧化碳 (ppm)")
+            st.line_chart(chart_df[['co2_ppm']], height=180)
 
-    # ---- 📈 趋势数据历史独立图表可视化 + 一键导出 CSV ----
-    st.markdown("---")
-    
-    chart_header_col, download_btn_col = st.columns([3, 1])
-    with chart_header_col:
-        st.subheader("📊 种植基地环境因子独立演变趋势 (最新100个采集周期数据)")
-    with download_btn_col:
-        csv_bytes = convert_df_to_csv(df_live)
-        # 文件名使用24小时制标记
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        st.download_button(
-            label="📥 一键导出历史数据为 CSV",
-            data=csv_bytes,
-            file_name=f"连州玉竹环境监测数据_{timestamp}.csv",
-            mime="text/csv",
-            key="download-csv"
-        )
-    
-    # 提取包含时间戳的全要素数据集并建立索引（24小时制时间轴）
-    chart_df = df_live[['created_at', 'air_temp', 'air_hum', 'light_lux', 'co2_ppm', 'soil_moisture']].copy()
-    chart_df.set_index('created_at', inplace=True)
-    
-    # =======================================================
-    # 构建 5 个独立的折线图区 (采用两列并排 + 底部单列排版)
-    # =======================================================
-    chart_col1, chart_col2 = st.columns(2)
-    
-    with chart_col1:
-        st.markdown("##### 🌡️ 空气温度 (°C)")
-        st.line_chart(chart_df[['air_temp']].rename(columns={'air_temp': '空气温度 (°C)'}))
-        
-        st.markdown("##### 🌱 土壤含水率 (%)")
-        st.line_chart(chart_df[['soil_moisture']].rename(columns={'soil_moisture': '土壤含水率 (%)'}))
-
-    with chart_col2:
-        st.markdown("##### 💧 空气湿度 (%)")
-        st.line_chart(chart_df[['air_hum']].rename(columns={'air_hum': '空气湿度 (%)'}))
-        
-        st.markdown("##### ☀️ 光照强度 (lx)")
-        st.line_chart(chart_df[['light_lux']].rename(columns={'light_lux': '光照强度 (lx)'}))
-        
-    # 二氧化碳单独占据一整行（因为波动幅度通常比较大，横向拉宽更好看）
-    st.markdown("##### ☁️ 二氧化碳浓度 (ppm)")
-    st.line_chart(chart_df[['co2_ppm']].rename(columns={'co2_ppm': '二氧化碳浓度 (ppm)'}))
+        with c_col2:
+            st.caption("💧 空气湿度 (%)")
+            st.line_chart(chart_df[['air_hum']], height=180)
+            
+            st.caption("🌱 土壤含水率 (%)")
+            st.line_chart(chart_df[['soil_moisture']], height=180)
+            
+            # 补齐右下角空白，提升UI平衡感
+            st.info("💡 **栽培提示**：玉竹喜阴湿环境，若光照持续 > 8000 lx 且土壤含水率 < 40%，建议启动水肥一体化微喷降温保墒。")
 
 else:
-    st.warning("⏳ 正在等待 Supabase 云端同步初始历史数据，请确保底层板子已成功连网发送首包。")
-
-# ==========================================
-# 🏢 落款与技术支持信息
-# ==========================================
-st.markdown("---")
-st.markdown(
-    "<center style='color:gray; font-size:14px;'>"
-    "技术支持团队：中山大学农业与生物技术学院 魏蜜团队"
-    "</center>", 
-    unsafe_allow_html=True
-)
+    st.warning("⏳ 正在建立与野外基站的下行链路，请检查供电与网络环境...")
 
 # ==========================================
 # ⏱️ 自动刷新控制逻辑
