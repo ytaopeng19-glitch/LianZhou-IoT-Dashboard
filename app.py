@@ -2,15 +2,18 @@ import streamlit as st
 import requests
 import pandas as pd
 import numpy as np
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import time
 import base64          
 from io import BytesIO 
 from PIL import Image  
 
 # ==========================================
-# ⚙️ 核心与页面配置
+# ⚙️ 核心与时区配置
 # ==========================================
+# 强制锁定北京时间 (UTC+8)，无视服务器本地时区
+BEIJING_TZ = timezone(timedelta(hours=8))
+
 st.set_page_config(
     page_title="连州玉竹栽培环境监测与水肥控制系统", 
     page_icon="🌱", 
@@ -51,34 +54,36 @@ def fetch_latest_image():
 
 @st.cache_data(ttl=3600, max_entries=20) 
 def process_and_rotate_image(img_url, rotation_angle):
-    """下载图片并进行角度旋转，转换为 Base64 供 HTML 渲染 (带缓存机制极速加载)"""
+    """下载图片并进行角度旋转，转换为 Base64 供 HTML 渲染"""
     if not img_url.startswith("http"):
         return img_url
     try:
         resp = requests.get(img_url, timeout=5)
         if resp.status_code == 200:
             img = Image.open(BytesIO(resp.content))
-            # 如果需要旋转 (负数代表顺时针，expand=True保证90度旋转时不裁切画幅)
             if rotation_angle != 0:
                 img = img.rotate(-rotation_angle, expand=True)
-            # 转回 Base64
             buffered = BytesIO()
             img.save(buffered, format="JPEG")
             img_b64 = base64.b64encode(buffered.getvalue()).decode()
             return f"data:image/jpeg;base64,{img_b64}"
     except Exception:
         pass
-    return img_url # 旋转失败则退回原图链接
+    return img_url 
 
 @st.cache_data(ttl=5)
 def fetch_latest_env_data():
-    """读取 LILYGO 节点的环境数据 (模拟当前大屏上的实时状态值)"""
+    """
+    读取 LILYGO 节点的环境数据 
+    目前以大屏系统时间为准模拟产生最新戳，后续接入真实数据表后替换为数据库时间
+    """
     return {
         "co2": 887,
         "temp": 30.7,
         "humidity": 80.1,
         "light": 25.8,
-        "soil_moisture": 60  # 🔧 降到 60% 时将触发自动灌溉闭环工作
+        "soil_moisture": 60,  
+        "timestamp": datetime.now(BEIJING_TZ).strftime("%Y-%m-%d %H:%M:%S") # 动态绑定北京时间戳
     }
 
 # ==========================================
@@ -105,17 +110,23 @@ with st.sidebar:
     st.success("🟢 视频观测节点 (ESP32-CAM): 在线") 
     
     st.markdown("---")
-    st.caption("技术支持：中山大学农业与生物技术学院 魏蜜课题组")
+    st.caption("技术支持：中山大学农业与生物技术学院 彭宇涛课题组")
 
 # ==========================================
 # 🖥️ 顶部 Header 与 KPI 指标渲染
 # ==========================================
 st.title("🌱 连州玉竹栽培环境监测与水肥控制系统")
-current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-st.caption(f"🕒 最新同步: {current_time} | 📍 基地: 广东连州高山生态种植区")
+
+# 🌟 大屏主系统北京时间
+current_sys_time = datetime.now(BEIJING_TZ).strftime("%Y-%m-%d %H:%M:%S")
+st.caption(f"💻 大屏系统时间 (北京时间): {current_sys_time} | 📍 基地: 广东连州高山生态种植区")
 st.markdown("---")
 
+# 获取节点环境数据
 env_data = fetch_latest_env_data()
+
+# 🌟 新增：独立显示环境节点的数据更新时间
+st.markdown(f"**📡 环境节点 (LILYGO) 数据同步时间:** `{env_data['timestamp']}`")
 
 k1, k2, k3, k4, k5 = st.columns(5)
 k1.metric("☁️ 二氧化碳 [ppm]", f"{env_data['co2']}")
@@ -136,7 +147,7 @@ with left_col:
     
     latest_img_url, capture_time = fetch_latest_image()
     
-    # 💡 时区转换
+    # 时区转换：ESP32-CAM 传上来的云端时间转北京时间
     if capture_time != "待 ESP32-CAM 上传":
         try:
             dt_beijing = pd.to_datetime(capture_time).tz_convert('Asia/Shanghai')
@@ -146,7 +157,6 @@ with left_col:
     else:
         display_time = capture_time
         
-    # 🌟 调用后台旋转引擎处理图片
     display_img_src = process_and_rotate_image(latest_img_url, cam_rotation)
     
     watermark_html = f"""
@@ -168,31 +178,25 @@ with left_col:
     st.markdown("<br>", unsafe_allow_html=True)
     st.subheader("🚰 智能水肥干预")
     
-    # 🚨 关键更新：将目标表名更改为 device_control2
     control_url = f"{SUPABASE_URL}/rest/v1/device_control2?device_name=eq.c3_pump"
     headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
     
     try:
-        # 读取数据库当前状态
         res = requests.get(control_url, headers=headers).json()
         db_record = res[0] if res else {"is_pump_on": False, "is_auto_mode": False}
         current_pump = db_record.get("is_pump_on", False)
         current_auto = db_record.get("is_auto_mode", False)
         
-        # 🌟 1. 渲染模式切换主开关
         toggle_auto = st.toggle("🤖 开启无人值守闭环自动灌溉", value=current_auto)
         
-        # 如果用户在大屏上切换了模式，立即同步到 device_control2 表
         if toggle_auto != current_auto:
             requests.patch(control_url, headers=headers, json={"is_auto_mode": toggle_auto})
             st.rerun()
             
-        # 🌟 2. 双轨控制核心逻辑机制
         if toggle_auto:
             st.success("🤖 自动驾驶中：系统正在实时监控 LILYGO 节点指标...")
             current_soil = env_data["soil_moisture"]
             
-            # 自动化判断逻辑
             if current_soil < 40.0 and not current_pump:
                 requests.patch(control_url, headers=headers, json={"is_pump_on": True})
                 st.toast("⚠️ 土壤湿度过低，系统已自动下发【开启灌溉】指令！")
@@ -204,7 +208,6 @@ with left_col:
                 time.sleep(0.5)
                 st.rerun()
                 
-            # 显示状态反馈，禁用手动按钮
             if current_pump:
                 st.error("🔄 自动化决策：检测到湿度低，正在加压微喷中...")
             else:
@@ -212,7 +215,6 @@ with left_col:
             st.button("🟢 手动启动灌溉 (已由自动模式接管)", disabled=True, use_container_width=True)
             
         else:
-            # 👨‍💻 手动模式
             st.warning("👨‍💻 手动遥控中：无人值守系统已暂停")
             if current_pump:
                 st.error("🔴 水泵远程运行中...")
