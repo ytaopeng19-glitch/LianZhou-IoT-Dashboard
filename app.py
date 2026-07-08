@@ -103,11 +103,24 @@ with left_col:
     latest_img_url, capture_time = fetch_latest_image()
     display_time = capture_time[:19].replace("T", " ") if capture_time != "待 ESP32-CAM 上传" else capture_time
     
-    st.image(
-        latest_img_url, 
-        caption=f"🎥 ESP32-CAM 实时流媒体接入 | 抓拍时间: {display_time}",
-        use_container_width=True
-    )
+   # 🌟 新增：利用 HTML/CSS 实现左上角 OSD 水印悬浮特效
+    watermark_html = f"""
+    <div style="position: relative; width: 100%; border-radius: 8px; overflow: hidden; border: 1px solid #e6e6e6;">
+        <img src="{latest_img_url}" style="width: 100%; display: block;">
+        <div style="position: absolute; top: 12px; left: 12px; 
+                    background-color: rgba(0, 0, 0, 0.65); color: #ffffff; 
+                    padding: 8px 12px; border-radius: 6px; 
+                    font-family: sans-serif; font-size: 14px; line-height: 1.5;
+                    box-shadow: 0 2px 4px rgba(0,0,0,0.3); backdrop-filter: blur(2px);">
+            <div style="font-weight: bold;">📍 广东连州基地 - 生态位观测点</div>
+            <div style="color: #4ade80;">🕒 抓拍时间: {display_time}</div>
+        </div>
+    </div>
+    """
+    # 渲染带有水印的画面
+    st.markdown(watermark_html, unsafe_allow_html=True)
+    # 保留底部的状态说明
+    st.caption("🎥 ESP32-CAM 实时流媒体接入 (随系统心跳同步刷新)")
     
     st.markdown("<br>", unsafe_allow_html=True)
     st.subheader("🚰 智能水肥干预")
