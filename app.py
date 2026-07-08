@@ -31,7 +31,7 @@ SUPABASE_URL = "https://srzfkhiminxmbrbdipay.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNyemZraGltaW54bWJyYmRpcGF5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI2OTgyOTcsImV4cCI6MjA4ODI3NDI5N30.jI9aum5Qe5eniH-oHBiRyIo41EpKUIDedkH-2vHiPnw"
 
 # ==========================================
-# 🔌 数据抓取与图像旋转引擎
+# 🔌 数据抓取与智能决策引擎
 # ==========================================
 @st.cache_data(ttl=10) 
 def fetch_latest_image():
@@ -70,6 +70,17 @@ def process_and_rotate_image(img_url, rotation_angle):
         pass
     return img_url # 旋转失败则退回原图链接
 
+@st.cache_data(ttl=5)
+def fetch_latest_env_data():
+    """读取 LILYGO 节点的环境数据 (模拟当前大屏上的实时状态值)"""
+    return {
+        "co2": 887,
+        "temp": 30.7,
+        "humidity": 80.1,
+        "light": 25.8,
+        "soil_moisture": 38.5  # 🔧 故意模拟降到 38.5% 来触发自动灌溉闭环测试
+    }
+
 # ==========================================
 # 🖥️ 左侧边栏 (Sidebar) 渲染
 # ==========================================
@@ -85,13 +96,12 @@ with st.sidebar:
     auto_refresh = st.checkbox("☑️ 开启数据自动刷新", value=True)
     refresh_rate = st.slider("⏱️ 刷新间隔 (秒)", min_value=5, max_value=60, value=10)
     
-    # 🌟 新增：画面旋转控制器
     cam_rotation = st.selectbox("🔄 画面校正角度 (顺时针)", [0, 90, 180, 270], index=0, format_func=lambda x: f"{x}°")
     
     st.markdown("---")
     st.subheader("🔗 节点连通状态")
-    st.success("🟢 环境采集节点 (ESP32): 在线")
-    st.warning("🟡 水肥控制节点: 等待配网...")
+    st.success("🟢 环境采集节点 (LILYGO): 在线")
+    st.success("🟢 水肥控制节点 (ESP32-C3): 在线联控中")
     st.success("🟢 视频观测节点 (ESP32-CAM): 在线") 
     
     st.markdown("---")
@@ -105,12 +115,14 @@ current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 st.caption(f"🕒 最新同步: {current_time} | 📍 基地: 广东连州高山生态种植区")
 st.markdown("---")
 
+env_data = fetch_latest_env_data()
+
 k1, k2, k3, k4, k5 = st.columns(5)
-k1.metric("☁️ 二氧化碳 [ppm]", "887")
-k2.metric("🌡️ 空气温度 [℃]", "30.7")
-k3.metric("💧 空气湿度 [%]", "80.1")
-k4.metric("☀️ 光照强度 [lx]", "25.8")
-k5.metric("🌱 土壤含水率 [%]", "72")
+k1.metric("☁️ 二氧化碳 [ppm]", f"{env_data['co2']}")
+k2.metric("🌡️ 空气温度 [℃]", f"{env_data['temp']}")
+k3.metric("💧 空气湿度 [%]", f"{env_data['humidity']}")
+k4.metric("☀️ 光照强度 [lx]", f"{env_data['light']}")
+k5.metric("🌱 土壤含水率 [%]", f"{env_data['soil_moisture']}")
 st.markdown("---")
 
 # ==========================================
@@ -137,7 +149,6 @@ with left_col:
     # 🌟 调用后台旋转引擎处理图片
     display_img_src = process_and_rotate_image(latest_img_url, cam_rotation)
     
-    # 带有防裁切 OSD 的 HTML 结构
     watermark_html = f"""
     <div style="position: relative; width: 100%; border-radius: 8px; overflow: hidden; border: 1px solid #e6e6e6;">
         <img src="{display_img_src}" style="width: 100%; display: block;">
@@ -156,8 +167,66 @@ with left_col:
     
     st.markdown("<br>", unsafe_allow_html=True)
     st.subheader("🚰 智能水肥干预")
-    st.info("🔵 管道压力正常，处于待命状态")
-    st.button("🟢 手动启动灌溉", use_container_width=True)
+    
+    # 🚨 关键更新：将目标表名更改为 device_control2
+    control_url = f"{SUPABASE_URL}/rest/v1/device_control2?device_name=eq.c3_pump"
+    headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
+    
+    try:
+        # 读取数据库当前状态
+        res = requests.get(control_url, headers=headers).json()
+        db_record = res[0] if res else {"is_pump_on": False, "is_auto_mode": False}
+        current_pump = db_record.get("is_pump_on", False)
+        current_auto = db_record.get("is_auto_mode", False)
+        
+        # 🌟 1. 渲染模式切换主开关
+        toggle_auto = st.toggle("🤖 开启无人值守闭环自动灌溉", value=current_auto)
+        
+        # 如果用户在大屏上切换了模式，立即同步到 device_control2 表
+        if toggle_auto != current_auto:
+            requests.patch(control_url, headers=headers, json={"is_auto_mode": toggle_auto})
+            st.rerun()
+            
+        # 🌟 2. 双轨控制核心逻辑机制
+        if toggle_auto:
+            st.success("🤖 自动驾驶中：系统正在实时监控 LILYGO 节点指标...")
+            current_soil = env_data["soil_moisture"]
+            
+            # 自动化判断逻辑
+            if current_soil < 40.0 and not current_pump:
+                requests.patch(control_url, headers=headers, json={"is_pump_on": True})
+                st.toast("⚠️ 土壤湿度过低，系统已自动下发【开启灌溉】指令！")
+                time.sleep(0.5)
+                st.rerun()
+            elif current_soil >= 70.0 and current_pump:
+                requests.patch(control_url, headers=headers, json={"is_pump_on": False})
+                st.toast("✅ 土壤湿度已达标，系统已自动下发【关闭灌溉】指令！")
+                time.sleep(0.5)
+                st.rerun()
+                
+            # 显示状态反馈，禁用手动按钮
+            if current_pump:
+                st.error("🔄 自动化决策：检测到湿度低，正在加压微喷中...")
+            else:
+                st.info("💤 自动化决策：土壤墒情良好，水泵处于休眠待命状态")
+            st.button("🟢 手动启动灌溉 (已由自动模式接管)", disabled=True, use_container_width=True)
+            
+        else:
+            # 👨‍💻 手动模式
+            st.warning("👨‍💻 手动遥控中：无人值守系统已暂停")
+            if current_pump:
+                st.error("🔴 水泵远程运行中...")
+                if st.button("🛑 紧急停止灌溉", use_container_width=True):
+                    requests.patch(control_url, headers=headers, json={"is_pump_on": False})
+                    st.rerun()
+            else:
+                st.info("🔵 远程管道压力正常，处于待命状态")
+                if st.button("🟢 手动远程启动灌溉", use_container_width=True):
+                    requests.patch(control_url, headers=headers, json={"is_pump_on": True})
+                    st.rerun()
+                    
+    except Exception as e:
+        st.error("连接控制中枢失败，请检查数据库配置")
 
 # ----------------- 右侧：微气候演变趋势区 -----------------
 with right_col:
