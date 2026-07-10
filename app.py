@@ -66,11 +66,46 @@ def process_and_rotate_image(img_url, rotation_angle):
         pass
     return img_url 
 
-@st.cache_data(ttl=5)
+@st.cache_data(ttl=10) # 缓存 10 秒，避免高频刷新导致 API 封禁
 def fetch_latest_env_data():
+    url = f"{SUPABASE_URL}/rest/v1/base_env_data"
+    headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
+    # 通过 id 倒序排列，只请求最新的一条数据
+    params = {"order": "id.desc", "limit": 1}
+    
+    try:
+        response = requests.get(url, headers=headers, params=params, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            if data and len(data) > 0:
+                latest = data[0]
+                
+                # 处理 Supabase 的 UTC 零时区时间并转换为北京时间
+                raw_time = latest.get('created_at', '')
+                if raw_time:
+                    # 截取时间字符串前19位 (如 "2026-07-10T23:51:04") 转换时区
+                    dt_utc = datetime.strptime(raw_time[:19], "%Y-%m-%dT%H:%M:%S")
+                    dt_utc = dt_utc.replace(tzinfo=timezone.utc)
+                    display_time = dt_utc.astimezone(BEIJING_TZ).strftime("%Y-%m-%d %H:%M:%S")
+                else:
+                    display_time = datetime.now(BEIJING_TZ).strftime("%Y-%m-%d %H:%M:%S")
+                    
+                # 返回数据库中对应的真实字段
+                return {
+                    "co2": latest.get("co2_ppm", "--"),
+                    "temp": latest.get("air_temp", "--"),
+                    "humidity": latest.get("air_hum", "--"),
+                    "light": latest.get("light_lux", "--"),
+                    "soil_moisture": latest.get("soil_moisture", "--"),
+                    "timestamp": display_time
+                }
+    except Exception as e:
+        pass
+        
+    # 如果网络波动或请求失败，返回占位符避免页面崩溃
     return {
-        "co2": 887, "temp": 30.7, "humidity": 80.1, "light": 25.8, "soil_moisture": 60,  
-        "timestamp": datetime.now(BEIJING_TZ).strftime("%Y-%m-%d %H:%M:%S")
+        "co2": "--", "temp": "--", "humidity": "--", "light": "--", "soil_moisture": "--",  
+        "timestamp": "获取云端数据超时"
     }
 
 # ==========================================
