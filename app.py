@@ -28,12 +28,43 @@ hide_streamlit_style = """
 """
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
+# ==========================================
+# 🔒 登录鉴权模块 (防止恶意触发水泵)
+# ==========================================
+if 'authenticated' not in st.session_state:
+    st.session_state['authenticated'] = False
+
+if not st.session_state['authenticated']:
+    # 使用分栏让登录框在页面居中，更加美观
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.markdown("<br><br><br>", unsafe_allow_html=True)
+        st.title("🔒 系统安全登录")
+        st.markdown("---")
+        with st.form("login_form"):
+            password_input = st.text_input("请输入访问密码以解锁系统：", type="password")
+            submit_button = st.form_submit_button("登录系统", use_container_width=True)
+            
+            if submit_button:
+                if password_input == "Zx13702479":
+                    st.session_state['authenticated'] = True
+                    st.success("✅ 登录成功！正在加载节点数据...")
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.error("❌ 密码错误，请确认后重新输入。")
+    
+    # 核心拦截：如果未登录，强制停止程序运行，不渲染后面的大屏内容
+    st.stop()
+
+
+# ==========================================
+# 🔌 数据抓取与辅助函数 (以下为系统核心业务代码)
+# ==========================================
 SUPABASE_URL = "https://srzfkhiminxmbrbdipay.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNyemZraGltaW54bWJyYmRpcGF5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI2OTgyOTcsImV4cCI6MjA4ODI3NDI5N30.jI9aum5Qe5eniH-oHBiRyIo41EpKUIDedkH-2vHiPnw"
 
-# ==========================================
-# 🔌 数据抓取与辅助函数
-# ==========================================
+
 @st.cache_data(ttl=10) 
 def fetch_latest_image():
     url = f"{SUPABASE_URL}/rest/v1/base_cam_data"
@@ -116,7 +147,7 @@ def load_schedule():
         with open(SCHEDULE_FILE, 'r') as f:
             return json.load(f)
     return {
-        "stop_timestamp": 0, "plan_type": "none", "plan_time": "08:00", 
+         "stop_timestamp": 0, "plan_type": "none", "plan_time": "08:00", 
         "plan_duration": 15, "interval_days": 2, "last_run_date": ""
     }
 
@@ -152,11 +183,11 @@ if not current_auto:
 
     # 2. 检查周期性启动任务
     if sched["plan_type"] in ["daily", "interval"]:
-        current_hm = now_beijing.strftime("%H:%M")
-        today_str = now_beijing.strftime("%Y-%m-%d")
+         current_hm = now_beijing.strftime("%H:%M")
+         today_str = now_beijing.strftime("%Y-%m-%d")
         
-        # 当时间匹配（精确到分钟）
-        if current_hm == sched["plan_time"]:
+         # 当时间匹配（精确到分钟）
+         if current_hm == sched["plan_time"]:
             should_start = False
             if sched["plan_type"] == "daily" and sched["last_run_date"] != today_str:
                 should_start = True
@@ -191,13 +222,20 @@ with st.sidebar:
     auto_refresh = st.checkbox("☑️ 开启数据自动刷新", value=True)
     refresh_rate = st.slider("⏱️ 刷新间隔 (秒)", min_value=5, max_value=60, value=10)
     cam_rotation = st.selectbox("🔄 画面校正角度", [0, 90, 180, 270], index=0, format_func=lambda x: f"{x}°")
+    
     st.markdown("---")
     st.subheader("🔗 节点连通状态")
     st.success("🟢 环境采集节点 (LILYGO): 在线")
     st.success("🟢 水肥控制节点 (ESP32-C3): 在线联控")
     st.success("🟢 视频观测节点 (ESP32-CAM): 在线") 
+    
     st.markdown("---")
     st.caption("技术支持：中山大学农业与生物技术学院 魏蜜团队")
+    
+    # 登出按钮
+    if st.button("🚪 退出登录", use_container_width=True):
+        st.session_state['authenticated'] = False
+        st.rerun()
 
 st.title("🌱 连州玉竹栽培环境监测与水肥控制系统")
 st.caption(f"💻 大屏系统时间: {now_beijing.strftime('%Y-%m-%d %H:%M:%S')} | 📍 基地: 广东连州生态区")
@@ -257,10 +295,10 @@ with left_col:
         if toggle_auto:
             st.success("🤖 传感智控已接管：根据土壤水分自动启停水泵。")
             current_soil = env_data["soil_moisture"]
-            if current_soil < 40.0 and not current_pump:
+            if current_soil != "--" and float(current_soil) < 40.0 and not current_pump:
                 requests.patch(control_url, headers=headers, json={"is_pump_on": True})
                 st.rerun()
-            elif current_soil >= 70.0 and current_pump:
+            elif current_soil != "--" and float(current_soil) >= 70.0 and current_pump:
                 requests.patch(control_url, headers=headers, json={"is_pump_on": False})
                 st.rerun()
                 
