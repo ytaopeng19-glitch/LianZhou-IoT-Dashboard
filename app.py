@@ -7,12 +7,14 @@ import time
 import base64          
 from io import BytesIO 
 from PIL import Image  
+import json
+import os
 
 # ==========================================
-# ⚙️ 核心与时区配置
+# ⚙️ 核心与时区、本地缓存配置
 # ==========================================
-# 强制锁定北京时间 (UTC+8)，无视服务器本地时区
 BEIJING_TZ = timezone(timedelta(hours=8))
+SCHEDULE_FILE = "pump_schedule.json"
 
 st.set_page_config(
     page_title="连州玉竹栽培环境监测与水肥控制系统", 
@@ -21,12 +23,8 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 隐藏顶部右侧 Streamlit 默认菜单
 hide_streamlit_style = """
-<style>
-#MainMenu {visibility: hidden;}
-footer {visibility: hidden;}
-</style>
+<style>#MainMenu {visibility: hidden;} footer {visibility: hidden;}</style>
 """
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
@@ -34,11 +32,10 @@ SUPABASE_URL = "https://srzfkhiminxmbrbdipay.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNyemZraGltaW54bWJyYmRpcGF5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI2OTgyOTcsImV4cCI6MjA4ODI3NDI5N30.jI9aum5Qe5eniH-oHBiRyIo41EpKUIDedkH-2vHiPnw"
 
 # ==========================================
-# 🔌 数据抓取与智能决策引擎
+# 🔌 数据抓取与辅助函数
 # ==========================================
 @st.cache_data(ttl=10) 
 def fetch_latest_image():
-    """从 Supabase 获取最新照片URL"""
     url = f"{SUPABASE_URL}/rest/v1/base_cam_data"
     headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
     params = {"select": "img_url, created_at", "order": "id.desc", "limit": 1}
@@ -54,9 +51,7 @@ def fetch_latest_image():
 
 @st.cache_data(ttl=3600, max_entries=20) 
 def process_and_rotate_image(img_url, rotation_angle):
-    """下载图片并进行角度旋转，转换为 Base64 供 HTML 渲染"""
-    if not img_url.startswith("http"):
-        return img_url
+    if not img_url.startswith("http"): return img_url
     try:
         resp = requests.get(img_url, timeout=5)
         if resp.status_code == 200:
@@ -73,67 +68,115 @@ def process_and_rotate_image(img_url, rotation_angle):
 
 @st.cache_data(ttl=5)
 def fetch_latest_env_data():
-    """
-    读取 LILYGO 节点的环境数据 
-    目前以大屏系统时间为准模拟产生最新戳，后续接入真实数据表后替换为数据库时间
-    """
     return {
-        "co2": 887,
-        "temp": 30.7,
-        "humidity": 80.1,
-        "light": 25.8,
-        "soil_moisture": 60,  
-        "timestamp": datetime.now(BEIJING_TZ).strftime("%Y-%m-%d %H:%M:%S") # 动态绑定北京时间戳
+        "co2": 887, "temp": 30.7, "humidity": 80.1, "light": 25.8, "soil_moisture": 60,  
+        "timestamp": datetime.now(BEIJING_TZ).strftime("%Y-%m-%d %H:%M:%S")
     }
 
 # ==========================================
-# 🖥️ 左侧边栏 (Sidebar) 渲染
+# ⏰ 定时任务引擎 (后台大脑)
+# ==========================================
+def load_schedule():
+    if os.path.exists(SCHEDULE_FILE):
+        with open(SCHEDULE_FILE, 'r') as f:
+            return json.load(f)
+    return {
+        "stop_timestamp": 0, "plan_type": "none", "plan_time": "08:00", 
+        "plan_duration": 15, "interval_days": 2, "last_run_date": ""
+    }
+
+def save_schedule(data):
+    with open(SCHEDULE_FILE, 'w') as f:
+        json.dump(data, f)
+
+# 读取最新状态
+control_url = f"{SUPABASE_URL}/rest/v1/device_control2?device_name=eq.c3_pump"
+headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
+try:
+    res = requests.get(control_url, headers=headers).json()
+    db_record = res[0] if res else {"is_pump_on": False, "is_auto_mode": False}
+except Exception:
+    db_record = {"is_pump_on": False, "is_auto_mode": False}
+
+current_pump = db_record.get("is_pump_on", False)
+current_auto = db_record.get("is_auto_mode", False)
+
+sched = load_schedule()
+now_beijing = datetime.now(BEIJING_TZ)
+schedule_updated = False
+
+# 【核心逻辑】：如果未开启“环境自动模式”，则执行时间规划局
+if not current_auto:
+    # 1. 检查倒计时停止
+    if current_pump and sched["stop_timestamp"] > 0:
+        if now_beijing.timestamp() >= sched["stop_timestamp"]:
+            current_pump = False
+            sched["stop_timestamp"] = 0
+            requests.patch(control_url, headers=headers, json={"is_pump_on": False})
+            schedule_updated = True
+
+    # 2. 检查周期性启动任务
+    if sched["plan_type"] in ["daily", "interval"]:
+        current_hm = now_beijing.strftime("%H:%M")
+        today_str = now_beijing.strftime("%Y-%m-%d")
+        
+        # 当时间匹配（精确到分钟）
+        if current_hm == sched["plan_time"]:
+            should_start = False
+            if sched["plan_type"] == "daily" and sched["last_run_date"] != today_str:
+                should_start = True
+            elif sched["plan_type"] == "interval":
+                if not sched["last_run_date"]:
+                    should_start = True
+                else:
+                    last_run_date = datetime.strptime(sched["last_run_date"], "%Y-%m-%d").date()
+                    if (now_beijing.date() - last_run_date).days >= sched["interval_days"]:
+                        should_start = True
+            
+            if should_start and not current_pump:
+                current_pump = True
+                sched["stop_timestamp"] = now_beijing.timestamp() + sched["plan_duration"] * 60
+                sched["last_run_date"] = today_str
+                requests.patch(control_url, headers=headers, json={"is_pump_on": True})
+                schedule_updated = True
+
+if schedule_updated:
+    save_schedule(sched)
+
+# ==========================================
+# 🖥️ 侧边栏与头部渲染
 # ==========================================
 with st.sidebar:
     try:
         st.image("logo绿色.png", use_container_width=True)
     except Exception:
-        st.error("未能找到 logo绿色.png 文件")
-        
+        pass
     st.markdown("---")
-    
     st.subheader("⚙️ 运行控制台")
     auto_refresh = st.checkbox("☑️ 开启数据自动刷新", value=True)
     refresh_rate = st.slider("⏱️ 刷新间隔 (秒)", min_value=5, max_value=60, value=10)
-    
-    cam_rotation = st.selectbox("🔄 画面校正角度 (顺时针)", [0, 90, 180, 270], index=0, format_func=lambda x: f"{x}°")
-    
+    cam_rotation = st.selectbox("🔄 画面校正角度", [0, 90, 180, 270], index=0, format_func=lambda x: f"{x}°")
     st.markdown("---")
     st.subheader("🔗 节点连通状态")
     st.success("🟢 环境采集节点 (LILYGO): 在线")
-    st.success("🟢 水肥控制节点 (ESP32-C3): 在线联控中")
+    st.success("🟢 水肥控制节点 (ESP32-C3): 在线联控")
     st.success("🟢 视频观测节点 (ESP32-CAM): 在线") 
-    
     st.markdown("---")
-    st.caption("技术支持：中山大学农业与生物技术学院 魏蜜团队")
+    st.caption("技术支持：中山大学农业与生物技术学院 彭宇涛课题组")
 
-# ==========================================
-# 🖥️ 顶部 Header 与 KPI 指标渲染
-# ==========================================
 st.title("🌱 连州玉竹栽培环境监测与水肥控制系统")
-
-# 🌟 大屏主系统北京时间
-current_sys_time = datetime.now(BEIJING_TZ).strftime("%Y-%m-%d %H:%M:%S")
-st.caption(f"💻 大屏系统时间 (北京时间): {current_sys_time} | 📍 基地: 广东连州高山生态种植区")
+st.caption(f"💻 大屏系统时间: {now_beijing.strftime('%Y-%m-%d %H:%M:%S')} | 📍 基地: 广东连州生态区")
 st.markdown("---")
 
-# 获取节点环境数据
 env_data = fetch_latest_env_data()
-
-# 🌟 新增：独立显示环境节点的数据更新时间
-st.markdown(f"**📡 环境节点 (LILYGO) 数据同步时间:** `{env_data['timestamp']}`")
+st.markdown(f"**📡 环境节点同步时间:** `{env_data['timestamp']}`")
 
 k1, k2, k3, k4, k5 = st.columns(5)
-k1.metric("☁️ 二氧化碳 [ppm]", f"{env_data['co2']}")
-k2.metric("🌡️ 空气温度 [℃]", f"{env_data['temp']}")
-k3.metric("💧 空气湿度 [%]", f"{env_data['humidity']}")
-k4.metric("☀️ 光照强度 [lx]", f"{env_data['light']}")
-k5.metric("🌱 土壤含水率 [%]", f"{env_data['soil_moisture']}")
+k1.metric("☁️ CO2 [ppm]", f"{env_data['co2']}")
+k2.metric("🌡️ 温度 [℃]", f"{env_data['temp']}")
+k3.metric("💧 湿度 [%]", f"{env_data['humidity']}")
+k4.metric("☀️ 光照 [lx]", f"{env_data['light']}")
+k5.metric("🌱 土壤水分 [%]", f"{env_data['soil_moisture']}")
 st.markdown("---")
 
 # ==========================================
@@ -141,13 +184,9 @@ st.markdown("---")
 # ==========================================
 left_col, right_col = st.columns([4, 6])
 
-# ----------------- 左侧：监控与干预区 -----------------
 with left_col:
-    st.subheader("📷 现场生态位实况")
-    
+    st.subheader("📷 生态位实况")
     latest_img_url, capture_time = fetch_latest_image()
-    
-    # 时区转换：ESP32-CAM 传上来的云端时间转北京时间
     if capture_time != "待 ESP32-CAM 上传":
         try:
             dt_beijing = pd.to_datetime(capture_time).tz_convert('Asia/Shanghai')
@@ -158,82 +197,143 @@ with left_col:
         display_time = capture_time
         
     display_img_src = process_and_rotate_image(latest_img_url, cam_rotation)
-    
     watermark_html = f"""
     <div style="position: relative; width: 100%; border-radius: 8px; overflow: hidden; border: 1px solid #e6e6e6;">
         <img src="{display_img_src}" style="width: 100%; display: block;">
-        <div style="position: absolute; top: 12px; left: 12px; 
-                    background-color: rgba(0, 0, 0, 0.65); color: #ffffff; 
-                    padding: 8px 12px; border-radius: 6px; 
-                    font-family: sans-serif; font-size: 14px; line-height: 1.5;
-                    box-shadow: 0 2px 4px rgba(0,0,0,0.3); backdrop-filter: blur(2px);">
-            <div style="font-weight: bold;">📍 广东连州基地 - 生态位观测点</div>
-            <div style="color: #4ade80;">🕒 抓拍时间: {display_time}</div>
+        <div style="position: absolute; top: 12px; left: 12px; background-color: rgba(0, 0, 0, 0.65); color: #ffffff; padding: 8px 12px; border-radius: 6px; font-size: 14px; backdrop-filter: blur(2px);">
+            <b>📍 连州基地观测点</b><br><span style="color: #4ade80;">🕒 {display_time}</span>
         </div>
     </div>
     """
     st.markdown(watermark_html, unsafe_allow_html=True)
-    st.caption("🎥 ESP32-CAM 实时流媒体接入 (已启用云端渲染引擎)")
-    
     st.markdown("<br>", unsafe_allow_html=True)
-    st.subheader("🚰 智能水肥干预")
+
+    # 🌟 核心升级：控制台选项卡
+    st.subheader("🚰 水肥干预中枢")
+    tab_ctrl, tab_plan = st.tabs(["🚦 传感智控 & 快捷遥控", "📅 周期灌溉计划"])
     
-    control_url = f"{SUPABASE_URL}/rest/v1/device_control2?device_name=eq.c3_pump"
-    headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
-    
-    try:
-        res = requests.get(control_url, headers=headers).json()
-        db_record = res[0] if res else {"is_pump_on": False, "is_auto_mode": False}
-        current_pump = db_record.get("is_pump_on", False)
-        current_auto = db_record.get("is_auto_mode", False)
-        
-        toggle_auto = st.toggle("🤖 开启无人值守闭环自动灌溉", value=current_auto)
-        
+    # -------- Tab 1: 实时与快捷控制 --------
+    with tab_ctrl:
+        toggle_auto = st.toggle("🤖 开启环境阈值自动灌溉 (基于土壤水分)", value=current_auto)
         if toggle_auto != current_auto:
             requests.patch(control_url, headers=headers, json={"is_auto_mode": toggle_auto})
             st.rerun()
             
         if toggle_auto:
-            st.success("🤖 自动驾驶中：系统正在实时监控 LILYGO 节点指标...")
+            st.success("🤖 传感智控已接管：根据土壤水分自动启停水泵。")
             current_soil = env_data["soil_moisture"]
-            
             if current_soil < 40.0 and not current_pump:
                 requests.patch(control_url, headers=headers, json={"is_pump_on": True})
-                st.toast("⚠️ 土壤湿度过低，系统已自动下发【开启灌溉】指令！")
-                time.sleep(0.5)
                 st.rerun()
             elif current_soil >= 70.0 and current_pump:
                 requests.patch(control_url, headers=headers, json={"is_pump_on": False})
-                st.toast("✅ 土壤湿度已达标，系统已自动下发【关闭灌溉】指令！")
-                time.sleep(0.5)
                 st.rerun()
                 
-            if current_pump:
-                st.error("🔄 自动化决策：检测到湿度低，正在加压微喷中...")
-            else:
-                st.info("💤 自动化决策：土壤墒情良好，水泵处于休眠待命状态")
-            st.button("🟢 手动启动灌溉 (已由自动模式接管)", disabled=True, use_container_width=True)
+            if current_pump: st.error("🔄 自动干预：正在加压微喷中...")
+            else: st.info("💤 土壤墒情良好，水泵待命中。")
+            st.button("手动控制 (环境自动模式下禁用)", disabled=True, use_container_width=True)
             
         else:
-            st.warning("👨‍💻 手动遥控中：无人值守系统已暂停")
+            st.warning("👨‍💻 手动干预模式 (环境智控已暂停)")
+            
+            # 显示正在倒计时的情况
             if current_pump:
-                st.error("🔴 水泵远程运行中...")
+                st.error("🔴 水泵正在运行中...")
+                if sched["stop_timestamp"] > 0:
+                    stop_dt = datetime.fromtimestamp(sched["stop_timestamp"], BEIJING_TZ)
+                    st.info(f"⏳ 倒计时进行中，预计于 **{stop_dt.strftime('%H:%M:%S')}** 自动关闭。")
+                
                 if st.button("🛑 紧急停止灌溉", use_container_width=True):
                     requests.patch(control_url, headers=headers, json={"is_pump_on": False})
+                    sched["stop_timestamp"] = 0
+                    save_schedule(sched)
                     st.rerun()
             else:
-                st.info("🔵 远程管道压力正常，处于待命状态")
-                if st.button("🟢 手动远程启动灌溉", use_container_width=True):
+                st.info("🔵 管道压力正常，等待指令。")
+                if st.button("🟢 持续开启水泵", use_container_width=True):
                     requests.patch(control_url, headers=headers, json={"is_pump_on": True})
+                    sched["stop_timestamp"] = 0 # 清除倒计时标志
+                    save_schedule(sched)
                     st.rerun()
-                    
-    except Exception as e:
-        st.error("连接控制中枢失败，请检查数据库配置")
+                
+                st.markdown("---")
+                st.caption("⏱️ **快捷倒计时灌溉 (到点自动停):**")
+                c1, c2, c3, c4 = st.columns(4)
+                
+                def start_timed_pump(mins):
+                    requests.patch(control_url, headers=headers, json={"is_pump_on": True})
+                    sched["stop_timestamp"] = datetime.now(BEIJING_TZ).timestamp() + mins * 60
+                    save_schedule(sched)
+                
+                if c1.button("10 分钟", use_container_width=True): 
+                    start_timed_pump(10)
+                    st.rerun()
+                if c2.button("15 分钟", use_container_width=True): 
+                    start_timed_pump(15)
+                    st.rerun()
+                if c3.button("25 分钟", use_container_width=True): 
+                    start_timed_pump(25)
+                    st.rerun()
+                if c4.button("1 小时", use_container_width=True): 
+                    start_timed_pump(60)
+                    st.rerun()
 
-# ----------------- 右侧：微气候演变趋势区 -----------------
+    # -------- Tab 2: 周期灌溉计划 --------
+    with tab_plan:
+        if current_auto:
+            st.error("⚠️ 当前已开启【环境阈值自动灌溉】。为避免逻辑冲突，请先在左侧标签页关闭环境智控，再启用周期计划。")
+        else:
+            st.info("💡 设定无人值守的周期计划。到达指定时间后，系统会自动启动水泵并按设定时长灌溉。")
+            
+            with st.form("schedule_form"):
+                plan_mode = st.radio(
+                    "📅 计划模式", 
+                    ["不启用", "每天固定时间", "按天数间隔"],
+                    index=0 if sched["plan_type"] == "none" else (1 if sched["plan_type"] == "daily" else 2)
+                )
+                
+                col_t, col_d = st.columns(2)
+                with col_t:
+                    input_time = st.time_input("⏰ 设定启动时间", value=datetime.strptime(sched["plan_time"], "%H:%M").time())
+                with col_d:
+                    input_duration = st.number_input("⏱️ 每次灌溉时长 (分钟)", min_value=1, max_value=300, value=sched["plan_duration"])
+                
+                input_interval = 2
+                if plan_mode == "按天数间隔":
+                    input_interval = st.slider("🗓️ 间隔天数 (每隔几天灌溉一次)", min_value=1, max_value=10, value=sched["interval_days"])
+                
+                submit_plan = st.form_submit_button("保存周期计划", use_container_width=True)
+                
+                if submit_plan:
+                    if plan_mode == "不启用":
+                        sched["plan_type"] = "none"
+                    elif plan_mode == "每天固定时间":
+                        sched["plan_type"] = "daily"
+                    else:
+                        sched["plan_type"] = "interval"
+                    
+                    sched["plan_time"] = input_time.strftime("%H:%M")
+                    sched["plan_duration"] = input_duration
+                    sched["interval_days"] = input_interval
+                    
+                    save_schedule(sched)
+                    st.success("✅ 计划已保存！")
+                    time.sleep(1)
+                    st.rerun()
+            
+            # 显示当前状态
+            st.markdown("---")
+            if sched["plan_type"] == "none":
+                st.write("当前状态：**未启用任何周期计划**")
+            elif sched["plan_type"] == "daily":
+                st.write(f"当前状态：**每天 {sched['plan_time']}** 自动开启灌溉，持续 **{sched['plan_duration']}** 分钟。")
+            elif sched["plan_type"] == "interval":
+                st.write(f"当前状态：**每隔 {sched['interval_days']} 天** 的 **{sched['plan_time']}** 开启灌溉，持续 **{sched['plan_duration']}** 分钟。")
+                if sched["last_run_date"]:
+                    st.caption(f"上一次成功执行日期: {sched['last_run_date']}")
+
 with right_col:
     st.subheader("📈 核心微气候演变趋势 (100周期)")
-    
     df_temp = pd.DataFrame(np.random.randn(100, 1) * 0.5 + 30.7, columns=['空气温度 (℃)'])
     df_hum = pd.DataFrame(np.random.randn(100, 1) * 1.5 + 80.1, columns=['空气湿度 (%)'])
     df_light = pd.DataFrame(np.random.randn(100, 1) * 5 + 25.8, columns=['光照强度 (lx)'])
@@ -241,27 +341,16 @@ with right_col:
     df_co2 = pd.DataFrame(np.random.randn(100, 1) * 15 + 887, columns=['二氧化碳 (ppm)'])
 
     chart_col1, chart_col2 = st.columns(2)
-    
     with chart_col1:
-        st.caption("🌡️ 空气温度 (℃)")
         st.line_chart(df_temp, height=180)
-        st.caption("☀️ 光照强度 (lx)")
         st.line_chart(df_light, height=180)
-        st.caption("☁️ 二氧化碳 (ppm)")
         st.line_chart(df_co2, height=180)
-        
     with chart_col2:
-        st.caption("💧 空气湿度 (%)")
         st.line_chart(df_hum, height=180)
-        st.caption("🌱 土壤含水率 (%)")
         st.line_chart(df_soil, height=180)
-        
         st.markdown("<br>", unsafe_allow_html=True)
-        st.info("💡 **栽培提示:** 玉竹喜阴湿环境，若光照持续 > 8000 lx 且土壤含水率 < 40%，建议启动水肥一体化微喷降温保墒。")
+        st.info("💡 **栽培提示:** 玉竹喜阴湿环境，若光照持续 > 8000 lx 且土壤含水率 < 40%，建议启动水肥一体化微喷。")
 
-# ==========================================
-# 🔄 自动刷新底层逻辑
-# ==========================================
 if auto_refresh:
     time.sleep(refresh_rate)
     st.rerun()
