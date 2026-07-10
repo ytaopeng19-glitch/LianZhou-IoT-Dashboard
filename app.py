@@ -197,7 +197,7 @@ with st.sidebar:
     st.success("🟢 水肥控制节点 (ESP32-C3): 在线联控")
     st.success("🟢 视频观测节点 (ESP32-CAM): 在线") 
     st.markdown("---")
-    st.caption("技术支持：中山大学农业与生物技术学院 彭宇涛课题组")
+    st.caption("技术支持：中山大学农业与生物技术学院 魏蜜团队")
 
 st.title("🌱 连州玉竹栽培环境监测与水肥控制系统")
 st.caption(f"💻 大屏系统时间: {now_beijing.strftime('%Y-%m-%d %H:%M:%S')} | 📍 基地: 广东连州生态区")
