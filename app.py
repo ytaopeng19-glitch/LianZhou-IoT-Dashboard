@@ -23,15 +23,13 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 🌟 全局 CSS 布局优化：缩减留白，适配一屏全显
+# 🌟 全局 CSS 布局优化
 compact_style = """
 <style>
     #MainMenu {visibility: hidden;} 
     footer {visibility: hidden;}
-    /* 缩减页面整体上下边距，拉宽最大宽度 */
-    .block-container {padding-top: 1.5rem; padding-bottom: 1rem; max-width: 96%;}
-    /* 缩减所有 h2, h3 标题的下边距 */
-    h2, h3 {margin-bottom: -0.5rem; padding-bottom: 0.2rem;}
+    /* 恢复适度的顶部边距，防止标题被浏览器/状态栏遮挡裁切 */
+    .block-container {padding-top: 2.5rem; padding-bottom: 1rem; max-width: 96%;}
     /* 缩减分割线边距 */
     hr {margin-top: 0.5rem; margin-bottom: 0.5rem;}
     /* 控制标签页的高度 */
@@ -214,12 +212,12 @@ with st.sidebar:
         st.rerun()
 
 # ==========================================
-# 🖥️ 头部紧凑渲染
+# 🖥️ 头部渲染
 # ==========================================
 env_data = fetch_latest_env_data()
 
-# 将标题和状态信息放在一行内，极大节省空间
-st.markdown("### 🌱 连州玉竹栽培环境监测与水肥控制系统")
+# 替换回标准的 st.header，避免被裁切
+st.header("🌱 连州玉竹栽培环境监测与水肥控制系统")
 st.caption(f"💻 大屏时间: `{now_beijing.strftime('%Y-%m-%d %H:%M:%S')}` ｜ 📍 基地: 广东连州 ｜ 📡 节点同步: `{env_data['timestamp']}`")
 
 # 数据面板
@@ -241,7 +239,6 @@ with left_col:
     display_time = datetime.now(BEIJING_TZ).strftime('%Y-%m-%d %H:%M:%S')
     display_img_src = process_and_rotate_image("YZ.jpg", cam_rotation)
     
-    # 稍微缩减了图片容器的内边距和字号
     watermark_html = f"""
     <div style="position: relative; width: 100%; border-radius: 6px; overflow: hidden; border: 1px solid #ddd; margin-bottom: 0.5rem;">
         <img src="{display_img_src}" style="width: 100%; display: block;">
@@ -346,22 +343,25 @@ with right_col:
     df_soil = pd.DataFrame(np.random.randn(100, 1) * 0.8 + 72, columns=['土壤水分 (%)'])
     df_co2 = pd.DataFrame(np.random.randn(100, 1) * 15 + 887, columns=['CO2 (ppm)'])
 
-    # ✨ 核心优化：使用 2行 x 3列 的网格布局彻底解决竖直溢出问题
-    r1_c1, r1_c2, r1_c3 = st.columns(3)
-    r2_c1, r2_c2, r2_c3 = st.columns(3)
+    # ✨ 核心优化：改成 3行 x 2列 布局，加高图表以填补垂直空间的留白
+    r1_c1, r1_c2 = st.columns(2)
+    r2_c1, r2_c2 = st.columns(2)
+    r3_c1, r3_c2 = st.columns(2)
     
-    # 设置所有图表的统一紧凑高度
-    CHART_H = 140
+    # 调高了所有图表的高度 (由 140 增至 220)
+    CHART_H = 220
     
     with r1_c1: st.line_chart(df_temp, height=CHART_H)
     with r1_c2: st.line_chart(df_hum, height=CHART_H)
-    with r1_c3: st.line_chart(df_light, height=CHART_H)
     
-    with r2_c1: st.line_chart(df_soil, height=CHART_H)
-    with r2_c2: st.line_chart(df_co2, height=CHART_H)
-    # 将最后一块空白区域用于放置提示信息
-    with r2_c3: 
-        st.markdown("<br>", unsafe_allow_html=True)
+    with r2_c1: st.line_chart(df_light, height=CHART_H)
+    with r2_c2: st.line_chart(df_soil, height=CHART_H)
+    
+    with r3_c1: st.line_chart(df_co2, height=CHART_H)
+    
+    # 巧妙利用右下角的最后一个位置放置栽培提示，使用换行符使其居中对齐
+    with r3_c2: 
+        st.markdown("<br><br>", unsafe_allow_html=True)
         st.info("💡 **栽培提示:** 玉竹喜阴湿环境。若光照持续 > 8000 lx 且土壤含水率 < 40%，建议启动微喷。")
 
 if auto_refresh:
