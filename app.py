@@ -207,6 +207,10 @@ with st.sidebar:
     st.success("🟢 ESP32-C3 联控: 在线")
     st.success("🟢 ESP32-CAM 观测: 在线") 
     
+    # ✨ 补回了缺失的技术支持信息
+    st.markdown("---")
+    st.caption("技术支持：中山大学农业与生物技术学院 魏蜜团队")
+    
     if st.button("🚪 退出登录", use_container_width=True):
         st.session_state['authenticated'] = False
         st.rerun()
@@ -343,12 +347,11 @@ with right_col:
     df_soil = pd.DataFrame(np.random.randn(100, 1) * 0.8 + 72, columns=['土壤水分 (%)'])
     df_co2 = pd.DataFrame(np.random.randn(100, 1) * 15 + 887, columns=['CO2 (ppm)'])
 
-    # ✨ 核心优化：改成 3行 x 2列 布局，加高图表以填补垂直空间的留白
+    # 采用 3行 x 2列 布局，加高图表以填补垂直空间的留白
     r1_c1, r1_c2 = st.columns(2)
     r2_c1, r2_c2 = st.columns(2)
     r3_c1, r3_c2 = st.columns(2)
     
-    # 调高了所有图表的高度 (由 140 增至 220)
     CHART_H = 220
     
     with r1_c1: st.line_chart(df_temp, height=CHART_H)
@@ -359,7 +362,6 @@ with right_col:
     
     with r3_c1: st.line_chart(df_co2, height=CHART_H)
     
-    # 巧妙利用右下角的最后一个位置放置栽培提示，使用换行符使其居中对齐
     with r3_c2: 
         st.markdown("<br><br>", unsafe_allow_html=True)
         st.info("💡 **栽培提示:** 玉竹喜阴湿环境。若光照持续 > 8000 lx 且土壤含水率 < 40%，建议启动微喷。")
