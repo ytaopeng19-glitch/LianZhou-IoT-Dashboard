@@ -64,7 +64,6 @@ if not st.session_state['authenticated']:
 SUPABASE_URL = "https://srzfkhiminxmbrbdipay.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNyemZraGltaW54bWJyYmRpcGF5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI2OTgyOTcsImV4cCI6MjA4ODI3NDI5N30.jI9aum5Qe5eniH-oHBiRyIo41EpKUIDedkH-2vHiPnw"
 
-
 @st.cache_data(ttl=10) 
 def fetch_latest_image():
     url = f"{SUPABASE_URL}/rest/v1/base_cam_data"
@@ -81,21 +80,35 @@ def fetch_latest_image():
     return "https://images.unsplash.com/photo-1628352081506-83c43123ed6d?auto=format&fit=crop&q=80&w=800", "待 ESP32-CAM 上传"
 
 @st.cache_data(ttl=3600, max_entries=20) 
-def process_and_rotate_image(img_url, rotation_angle):
-    if not img_url.startswith("http"): return img_url
+def process_and_rotate_image(img_source, rotation_angle):
     try:
-        resp = requests.get(img_url, timeout=5)
-        if resp.status_code == 200:
-            img = Image.open(BytesIO(resp.content))
-            if rotation_angle != 0:
-                img = img.rotate(-rotation_angle, expand=True)
-            buffered = BytesIO()
-            img.save(buffered, format="JPEG")
-            img_b64 = base64.b64encode(buffered.getvalue()).decode()
-            return f"data:image/jpeg;base64,{img_b64}"
+        # 判断是网络 URL 还是本地文件
+        if img_source.startswith("http"):
+            resp = requests.get(img_source, timeout=5)
+            if resp.status_code == 200:
+                img = Image.open(BytesIO(resp.content))
+            else:
+                return img_source
+        else:
+            # 读取本地图片 YZ.jpg
+            if os.path.exists(img_source):
+                img = Image.open(img_source)
+            else:
+                return "https://images.unsplash.com/photo-1628352081506-83c43123ed6d?auto=format&fit=crop&q=80&w=800" # 找不到本地文件时的回退占位图
+
+        # 处理旋转和 Base64 编码
+        if rotation_angle != 0:
+            img = img.rotate(-rotation_angle, expand=True)
+        buffered = BytesIO()
+        # 将图片保存为 JPEG 格式到内存中 (如果是其他格式则强制转为 RGB)
+        if img.mode in ("RGBA", "P"):
+            img = img.convert("RGB")
+        img.save(buffered, format="JPEG")
+        img_b64 = base64.b64encode(buffered.getvalue()).decode()
+        return f"data:image/jpeg;base64,{img_b64}"
     except Exception:
         pass
-    return img_url 
+    return img_source 
 
 @st.cache_data(ttl=10) # 缓存 10 秒，避免高频刷新导致 API 封禁
 def fetch_latest_env_data():
@@ -259,17 +272,13 @@ left_col, right_col = st.columns([4, 6])
 
 with left_col:
     st.subheader("📷 生态位实况")
-    latest_img_url, capture_time = fetch_latest_image()
-    if capture_time != "待 ESP32-CAM 上传":
-        try:
-            dt_beijing = pd.to_datetime(capture_time).tz_convert('Asia/Shanghai')
-            display_time = dt_beijing.strftime('%Y-%m-%d %H:%M:%S')
-        except Exception:
-            display_time = capture_time[:19].replace("T", " ")
-    else:
-        display_time = capture_time
-        
-    display_img_src = process_and_rotate_image(latest_img_url, cam_rotation)
+    
+    # 既然是读取本地静态图片，我们将水印时间设为当前大屏同步时间
+    display_time = datetime.now(BEIJING_TZ).strftime('%Y-%m-%d %H:%M:%S')
+    
+    # 核心修改：直接传入本地文件名 YZ.jpg
+    display_img_src = process_and_rotate_image("YZ.jpg", cam_rotation)
+    
     watermark_html = f"""
     <div style="position: relative; width: 100%; border-radius: 8px; overflow: hidden; border: 1px solid #e6e6e6;">
         <img src="{display_img_src}" style="width: 100%; display: block;">
