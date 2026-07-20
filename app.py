@@ -207,7 +207,6 @@ with st.sidebar:
     st.success("🟢 ESP32-C3 联控: 在线")
     st.success("🟢 ESP32-CAM 观测: 在线") 
     
-    # ✨ 补回了缺失的技术支持信息
     st.markdown("---")
     st.caption("技术支持：中山大学农业与生物技术学院 魏蜜团队")
     
@@ -220,7 +219,6 @@ with st.sidebar:
 # ==========================================
 env_data = fetch_latest_env_data()
 
-# 替换回标准的 st.header，避免被裁切
 st.header("🌱 连州玉竹栽培环境监测与水肥控制系统")
 st.caption(f"💻 大屏时间: `{now_beijing.strftime('%Y-%m-%d %H:%M:%S')}` ｜ 📍 基地: 广东连州 ｜ 📡 节点同步: `{env_data['timestamp']}`")
 
@@ -347,20 +345,31 @@ with right_col:
     df_soil = pd.DataFrame(np.random.randn(100, 1) * 0.8 + 72, columns=['土壤水分 (%)'])
     df_co2 = pd.DataFrame(np.random.randn(100, 1) * 15 + 887, columns=['CO2 (ppm)'])
 
-    # 采用 3行 x 2列 布局，加高图表以填补垂直空间的留白
     r1_c1, r1_c2 = st.columns(2)
     r2_c1, r2_c2 = st.columns(2)
     r3_c1, r3_c2 = st.columns(2)
     
-    CHART_H = 220
+    # 稍微调低图表高度以抵消新增标题的高度，维持两侧高度对称
+    CHART_H = 200
     
-    with r1_c1: st.line_chart(df_temp, height=CHART_H)
-    with r1_c2: st.line_chart(df_hum, height=CHART_H)
+    # ✨ 核心优化：为每个图表增加顶部标题标识
+    with r1_c1: 
+        st.caption("🌡️ **温度变化趋势 (℃)**")
+        st.line_chart(df_temp, height=CHART_H)
+    with r1_c2: 
+        st.caption("💧 **空气湿度趋势 (%)**")
+        st.line_chart(df_hum, height=CHART_H)
     
-    with r2_c1: st.line_chart(df_light, height=CHART_H)
-    with r2_c2: st.line_chart(df_soil, height=CHART_H)
+    with r2_c1: 
+        st.caption("☀️ **光照强度趋势 (lx)**")
+        st.line_chart(df_light, height=CHART_H)
+    with r2_c2: 
+        st.caption("🌱 **土壤水分趋势 (%)**")
+        st.line_chart(df_soil, height=CHART_H)
     
-    with r3_c1: st.line_chart(df_co2, height=CHART_H)
+    with r3_c1: 
+        st.caption("☁️ **二氧化碳浓度 (ppm)**")
+        st.line_chart(df_co2, height=CHART_H)
     
     with r3_c2: 
         st.markdown("<br><br>", unsafe_allow_html=True)
